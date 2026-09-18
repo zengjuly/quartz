@@ -73,4 +73,4 @@ jobs:
           FOLDER: "./quartz-app/public" # 最终同步的产物文件夹
           SERVER_IP: ${{ secrets.SERVER_HOST }}
           USERNAME: ${{ secrets.SERVER_USER }}
-          SERVER_DESTINATION: "/var/www/quartz" # 替换为您服务器上的 Web 静态网站根目录
+          SERVER_DESTINATION: "/home/ai/ai_runner/quartz/public" # 替换为您服务器上的 Web 静态网站根目录
