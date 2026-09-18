@@ -1,0 +1,76 @@
+name: Secure Build and Deploy (Quartz 5 + Vector DB)
+
+on:
+  push:
+    branches:
+      - v5 # 对应您当前正在使用的 v5 分支
+  repository_dispatch:
+    types: [vault_update] # 响应来自 obsdata 的远程唤醒信号
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1.1 拉取当前的私有 Quartz 框架代码
+      - name: Checkout Quartz Code
+        uses: actions/checkout@v4
+        with:
+          path: 'quartz-app'
+
+      # 1.2 跨仓库拉取您的私有 Obsidian 笔记（保留完整 Git 历史用于精准计算增量向量）
+      - name: Checkout Private Obsidian Notes
+        uses: actions/checkout@v4
+        with:
+          repository: 'zengjuly/obsdata'
+          token: ${{ secrets.VAULT_TOKEN }}
+          fetch-depth: 0 # 必须为 0，否则无法通过 git diff 识别增量文件
+          path: 'quartz-app/content'
+
+      # 2. 编译 Quartz 静态网站
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: 'quartz-app/package-lock.json'
+
+      - name: Install Node Dependencies
+        run: |
+          cd quartz-app
+          npm ci
+
+      - name: Build Quartz Site
+        run: |
+          cd quartz-app
+          npx quartz build
+
+      # 3. 部署 Python 推理环境
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Python Dependencies
+        run: |
+          pip install onnxruntime numpy
+
+      # 4. 运行高效的本地【增量向量化】脚本
+      - name: Generate Vector DB
+        run: |
+          cd quartz-app
+          # 运行您放置在 quartz 仓库根目录下的 sync_vector.py
+          python sync_vector.py 
+
+      # 5. 安全差量同步（全量HTML网页 + 增量更新后的vector.db）到您的 Linux 服务器
+      - name: Deploy to Server via Rsync
+        uses: AEnterprise/rsync-deploy@v1.0.2
+        env:
+          DEPLOY_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          ARGS: "-avzr --delete" # 增量覆盖，自动清理服务器上已被您在手机上删除的旧文件
+          SERVER_PORT: "22"
+          FOLDER: "./quartz-app/public" # 最终同步的产物文件夹
+          SERVER_IP: ${{ secrets.SERVER_HOST }}
+          USERNAME: ${{ secrets.SERVER_USER }}
+          SERVER_DESTINATION: "/var/www/quartz" # 替换为您服务器上的 Web 静态网站根目录
