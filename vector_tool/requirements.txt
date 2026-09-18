@@ -1,0 +1,4 @@
+# CI 向量构建依赖（分库用 numpy 暴力检索，无需 sqlite-vec）
+numpy<3
+onnxruntime
+tokenizers

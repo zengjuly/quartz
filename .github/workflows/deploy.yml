@@ -55,13 +55,22 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          pip install onnxruntime numpy
+          pip install -r vector_tool/requirements.txt
 
-      # 4. 运行高效的本地【增量向量化】脚本
-      - name: Generate Vector DB
+      # 4. 向量库构建：按领域拆分为多个小 sqlite（int8向量+gzip文本），
+      #    产物 public/vector/<domain>.db + manifest.json，单库 KB~MB 级。
+      #    替换旧 sync_vector.py（mock 向量 + 单文件全量下发）
+      - name: Build Vector Shards
         run: |
           cd quartz-app
-          python sync_vector.py
+          if [ ! -f quartz.config.default.yaml ]; then
+            echo "::warning::仓库缺少 Quartz 配置文件，跳过向量构建"
+            exit 0
+          fi
+          python vector_tool/kb_vec.py shard \
+            --vault "$GITHUB_WORKSPACE/quartz-app/content" \
+            --out "$GITHUB_WORKSPACE/quartz-app/public/vector"
+
 
       # 10. 全自动将网页产物与向量库同步进新仓库
       #     【W1 修复】deploy-action 在 job 根目录跑 `git config user.name`，
