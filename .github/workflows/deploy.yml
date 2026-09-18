@@ -67,7 +67,7 @@ jobs:
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           token: ${{ secrets.VAULT_TOKEN }}
-          repository-name: zengjuly/blog-output # 替换为您新仓库的实际路径
+          repository-name: zengjuly/quartz_out # 替换为您新仓库的实际路径
           branch: main                          # 推送的目标分支
-          folder: public                        # 将全套网页及 vector.db 所在的目录推过去
+          folder: ./public                        # 将全套网页及 vector.db 所在的目录推过去
           clean: true                           # 自动清理新仓库中已被您在 Obsidian 里删掉的旧页面
