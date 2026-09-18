@@ -62,14 +62,12 @@ jobs:
           # 运行您放置在 quartz 仓库根目录下的 sync_vector.py
           python sync_vector.py 
 
-      # 5. 安全差量同步（全量HTML网页 + 增量更新后的vector.db）到您的 Linux 服务器
-      - name: Deploy to Server via Rsync
-        uses: AEnterprise/rsync-deploy@v1.0.2
-        env:
-          DEPLOY_KEY: ${{ secrets.SERVER_SSH_KEY }}
-          ARGS: "-avzr --delete" # 增量覆盖，自动清理服务器上已被您在手机上删除的旧文件
-          SERVER_PORT: "22"
-          FOLDER: "./quartz-app/public" # 最终同步的产物文件夹
-          SERVER_IP: ${{ secrets.SERVER_HOST }}
-          USERNAME: ${{ secrets.SERVER_USER }}
-          SERVER_DESTINATION: "/home/ai/ai_runner/quartz/public" # 替换为您服务器上的 Web 静态网站根目录
+      # 10. 全自动将网页产物与向量库同步进新仓库
+      - name: Deploy Production Output to Another Repo
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          token: ${{ secrets.VAULT_TOKEN }}
+          repository-name: zengjuly/blog-output # 替换为您新仓库的实际路径
+          branch: main                          # 推送的目标分支
+          folder: public                        # 将全套网页及 vector.db 所在的目录推过去
+          clean: true                           # 自动清理新仓库中已被您在 Obsidian 里删掉的旧页面
