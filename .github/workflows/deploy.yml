@@ -25,9 +25,9 @@ jobs:
         with:
           repository: 'zengjuly/obsdata'
           token: ${{ secrets.VAULT_TOKEN }}
-          fetch-depth: 0 
+          fetch-depth: 0
           path: 'quartz-app/content'
-          persist-credentials: false # 【修复点 1】必须同样设置为 false，否则会和下一步的部署 Token 冲突
+          persist-credentials: false
 
       # 2. 编译 Quartz 静态网站
       - name: Setup Node.js
@@ -61,15 +61,27 @@ jobs:
       - name: Generate Vector DB
         run: |
           cd quartz-app
-          python sync_vector.py 
+          python sync_vector.py
 
       # 10. 全自动将网页产物与向量库同步进新仓库
+      #     【W1 修复】此前所有 step 均 persist-credentials:false，且没有任何
+      #     actions/checkout 把仓库检出到 runner 默认工作目录
+      #     (/home/runner/work/quartz/quartz)，导致 deploy-action 在 job 根目录
+      #     执行 `git config user.name` 时报 "fatal: not in a git directory"。
+      #     single-commit 模式只需要一个含 HEAD 的本地 git 目录，补一步浅检出即可。
+      - name: Re-checkout workspace root (fix deploy-action git dir)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Deploy Production Output to Another Repo
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           token: ${{ secrets.VAULT_TOKEN }}
-          repository-name: zengjuly/quartz_out 
-          branch: main                          
-          folder: ./quartz-app/public # 【修复点 2】明确指定相对于根目录的产物路径
-          clean: true                           
-          git-config-name: zengjuly # 强制指定 Git 提交者名称，防止插件盲猜环境报错
+          repository-name: zengjuly/quartz_out
+          branch: main
+          folder: ./quartz-app/public # 相对 runner 默认工作目录
+          clean: true
+          git-config-name: zengjuly
+          target-folder: .
