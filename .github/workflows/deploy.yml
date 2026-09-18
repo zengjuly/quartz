@@ -17,16 +17,17 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: 'quartz-app'
-          persist-credentials: false
+          persist-credentials: false # 保持关闭，防止凭证污染
 
-      # 1.2 跨仓库拉取您的私有 Obsidian 笔记（保留完整 Git 历史用于精准计算增量向量）
+      # 1.2 跨仓库拉取您的私有 Obsidian 笔记
       - name: Checkout Private Obsidian Notes
         uses: actions/checkout@v4
         with:
           repository: 'zengjuly/obsdata'
           token: ${{ secrets.VAULT_TOKEN }}
-          fetch-depth: 0 # 必须为 0，否则无法通过 git diff 识别增量文件
+          fetch-depth: 0 
           path: 'quartz-app/content'
+          persist-credentials: false # 【修复点 1】必须同样设置为 false，否则会和下一步的部署 Token 冲突
 
       # 2. 编译 Quartz 静态网站
       - name: Setup Node.js
@@ -60,7 +61,6 @@ jobs:
       - name: Generate Vector DB
         run: |
           cd quartz-app
-          # 运行您放置在 quartz 仓库根目录下的 sync_vector.py
           python sync_vector.py 
 
       # 10. 全自动将网页产物与向量库同步进新仓库
@@ -68,7 +68,8 @@ jobs:
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           token: ${{ secrets.VAULT_TOKEN }}
-          repository-name: zengjuly/quartz_out # 替换为您新仓库的实际路径
-          branch: main                          # 推送的目标分支
-          folder: ./quartz-app/public                        # 将全套网页及 vector.db 所在的目录推过去
-          clean: true                           # 自动清理新仓库中已被您在 Obsidian 里删掉的旧页面
+          repository-name: zengjuly/quartz_out 
+          branch: main                          
+          folder: ./quartz-app/public # 【修复点 2】明确指定相对于根目录的产物路径
+          clean: true                           
+          git-config-name: zengjuly # 强制指定 Git 提交者名称，防止插件盲猜环境报错
