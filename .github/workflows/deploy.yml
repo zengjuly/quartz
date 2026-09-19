@@ -54,7 +54,10 @@ jobs:
           python-version: '3.10'
 
       - name: Install Python Dependencies
+        # CI 修复：vector_tool/ 随主仓库 checkout 在 quartz-app/ 子目录下
+        # （run 35403039327 实测：根目录无此文件，pip 直接失败断掉整条链）
         run: |
+          cd quartz-app
           pip install -r vector_tool/requirements.txt
 
       # 4. 向量库构建：按领域拆分为多个小 sqlite（int8向量+gzip文本），
