@@ -74,6 +74,21 @@ jobs:
             --vault "$GITHUB_WORKSPACE/quartz-app/content" \
             --out "$GITHUB_WORKSPACE/quartz-app/public/vector"
 
+      # 4b. 前端检索包分发：把 shard 产物 + int8 模型 + tokenizer + ort wasm
+      #     运行时统一拷进 public/vector-web/（前端插件 VEC_BASE 指向此目录）。
+      #     --vault-prefix 必需：CI 里 kb_vec 写入的 doc_path 是 checkout 绝对
+      #     路径（$GITHUB_WORKSPACE/.../content/...），归一为 vault 相对路径才能
+      #     对上站点 URL，且防把构建机路径烤进公开站。
+      - name: Emit Web Vector Pack
+        run: |
+          cd quartz-app
+          python vector_tool/emit_web.py \
+            --shards public/vector \
+            --models vector_tool/models \
+            --out public/vector-web \
+            --vault-prefix "$GITHUB_WORKSPACE/quartz-app/content" \
+            --ort-dist node_modules/onnxruntime-web/dist
+
 
       # 10. 全自动将网页产物与向量库同步进新仓库
       #     【W1 修复】deploy-action 在 job 根目录跑 `git config user.name`，

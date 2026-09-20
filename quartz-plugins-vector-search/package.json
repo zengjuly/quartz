@@ -1,0 +1,32 @@
+{
+  "name": "vector-search",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "浏览器端语义向量搜索（bge-small-zh int8 ONNX + wasm + 静态分片包）",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./components": "./dist/components/index.js"
+  },
+  "peerDependencies": {
+    "preact": ">=10"
+  },
+  "quartz": {
+    "name": "vector-search",
+    "displayName": "Vector Search",
+    "category": "component",
+    "version": "0.1.0",
+    "quartzVersion": ">=5.0.0",
+    "defaultOrder": 60,
+    "defaultEnabled": true,
+    "components": {
+      "VectorSearch": {
+        "displayName": "语义搜索",
+        "description": "浏览器内 ONNX 语义向量搜索（本地推理，不上传查询）",
+        "defaultPosition": "left",
+        "defaultPriority": 20
+      }
+    }
+  }
+}

@@ -148,6 +148,14 @@ plugins:
       group: toolbar
       groupOptions:
         grow: true
+  - source: "./quartz-plugins-vector-search"
+    enabled: true
+    options:
+      placeholder: "语义搜索…"
+    layout:
+      position: left
+      priority: 25
+      group: toolbar
   - source: "@quartz-community/backlinks"
     enabled: true
     layout:
