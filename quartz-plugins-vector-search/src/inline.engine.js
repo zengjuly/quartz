@@ -324,6 +324,40 @@
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+  // ---------- 移动端 TOC 置顶（站点级补丁） ----------
+  // Quartz 在 <1200px 下 `.sidebar.right>.toc{display:none}` 隐藏目录，且右栏被
+  // 排在正文之后。此处把 TOC 节点搬进正文顶部的 <details> 折叠块（桌面自动还原）。
+  // 放在本插件是因为它是本站唯一的站点级 afterDOMLoaded 钩子（custom.scss 只能改
+  // 样式，搬不动 DOM）。
+  const tocWide = window.matchMedia("(min-width: 1200px)");
+  function placeToc() {
+    const article = document.querySelector(".center article") || document.querySelector("article");
+    if (!article) return;
+    const moved = document.querySelector(".vs-mobile-toc");
+    const toc = (moved && moved.querySelector(".toc")) ||
+      document.querySelector(".sidebar.right > .toc");
+    if (!toc || !toc.querySelector("a")) return;  // 无标题的笔记不显示空目录框
+    if (!tocWide.matches) {
+      if (moved) return;
+      const wrap = document.createElement("details");
+      wrap.className = "vs-mobile-toc";
+      wrap.open = true;
+      const sum = document.createElement("summary");
+      sum.textContent = "目录";
+      wrap.appendChild(sum);
+      wrap.appendChild(toc);
+      article.insertBefore(wrap, article.firstChild);
+    } else if (moved) {
+      const sb = document.querySelector(".sidebar.right");
+      const graph = sb && sb.querySelector(".graph");
+      if (graph) graph.after(toc);
+      else if (sb) sb.appendChild(toc);
+      moved.remove();
+    }
+  }
+  if (tocWide.addEventListener) tocWide.addEventListener("change", placeToc);
+  else if (tocWide.addListener) tocWide.addListener(placeToc);
+
   // ---------- UI 挂载 ----------
   function mount() {
     document.querySelectorAll(".vector-search").forEach((root) => {
@@ -337,8 +371,21 @@
         clearTimeout(timer);
         timer = setTimeout(() => runSearch(input.value, box), 450);
       });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { input.value = ""; box.innerHTML = ""; input.blur(); }
+      });
     });
+    placeToc();
   }
+
+  // 点击面板外关闭结果（全屏浮层形态下必须有，模块级只注册一次）
+  document.addEventListener("click", (e) => {
+    document.querySelectorAll(".vector-search").forEach((root) => {
+      if (root.contains(e.target)) return;
+      const b = root.querySelector(".vector-results");
+      if (b && b.innerHTML) b.innerHTML = "";
+    });
+  });
 
   window.__vectorSearch = { runSearch, mount, state };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);

@@ -18,21 +18,70 @@
   outline: none;
   border-color: var(--tertiary);
 }
-.vector-search > .vector-results {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  z-index: calc(var(--search-z-index, 999) + 2);
-  max-height: 60vh;
+.vector-search > .vector-results:empty {
+  display: none;
+}
+/* 结果面板：与内置搜索（.search-container/.search-space）一致的全屏浮层范式
+   —— 居中 65% 宽（移动端 90%）、12vh 起、带模糊遮罩，而不是贴着输入框的窄下拉。 */
+.vector-search > .vector-results:not(:empty) {
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: 65%;
+  max-width: none;
+  max-height: 70vh;
   overflow-y: auto;
+  z-index: calc(var(--search-z-index, 999) + 3);
   background: var(--light);
   border: 1px solid var(--lightgray);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(27, 33, 48, 0.1);
+  border-radius: 7px;
+  box-shadow: 0 14px 50px rgba(27, 33, 48, 0.12), 0 10px 30px rgba(27, 33, 48, 0.16);
 }
-.vector-search > .vector-results:not(:empty) {
-  padding: 0.25rem 0;
+/* 遮罩：结果面板打开时压暗页面（与内置搜索的 backdrop-filter 一致） */
+.vector-search:has(> .vector-results:not(:empty))::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(27, 33, 48, 0.12);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  z-index: calc(var(--search-z-index, 999) + 2);
+}
+@media (max-width: 800px) {
+  .vector-search > .vector-results:not(:empty) {
+    width: 90%;
+    max-width: none;
+    top: 8vh;
+    max-height: 75vh;
+  }
+}
+/* 移动端 TOC 置顶块（节点由引擎 placeToc() 搬入正文顶部） */
+.vs-mobile-toc {
+  margin: 0 0 1.25rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--lightgray);
+  border-radius: 6px;
+  background: var(--light);
+}
+.vs-mobile-toc > summary {
+  cursor: pointer;
+  padding: 0.3rem 0;
+  font-weight: 600;
+  color: var(--dark);
+}
+.vs-mobile-toc .toc {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.vs-mobile-toc .toc-content {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.vs-mobile-toc .toc-header {
+  display: none;
 }
 .vector-search .vs-status {
   padding: 0.5em 0.9em;
