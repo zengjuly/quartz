@@ -1,4 +1,6 @@
 # CI 向量构建依赖（分库用 numpy 暴力检索，无需 sqlite-vec）
+# 版本必须锁死：onnxruntime/tokenizers 升级会改变嵌入字节 → pack 全量
+# 漂移进 quartz_out（跨天构建实测 19-23% 向量字节差异源于版本漂移）。
 numpy<3
-onnxruntime
-tokenizers
+onnxruntime==1.30.0
+tokenizers==0.23.2

@@ -1,7 +1,16 @@
 diff --git a/node_modules/@quartz-community/content-index/dist/index.js b/node_modules/@quartz-community/content-index/dist/index.js
-index 5f7d374..a0cb8b4 100644
+index 5f7d374..dee626c 100644
 --- a/node_modules/@quartz-community/content-index/dist/index.js
 +++ b/node_modules/@quartz-community/content-index/dist/index.js
+@@ -2280,7 +2280,7 @@ function generateSiteMap(cfg, idx) {
+   const base = cfg.baseUrl ?? "";
+   const createURLEntry = (slug2, content) => `<url>
+     <loc>https://${joinSegments(base, encodeURI(slug2))}</loc>
+-    ${content.date && `<lastmod>${content.date.toISOString()}</lastmod>`}
++    ${content.date ? `<lastmod>${content.date.toISOString()}</lastmod>` : ""}
+   </url>`;
+   const urls = Array.from(idx).map(([slug2, content]) => createURLEntry(simplifySlug(slug2), content)).join("");
+   return `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">${urls}</urlset>`;
 @@ -2295,7 +2295,7 @@ function generateRSSFeed(cfg, idx, options, limit) {
      <link>https://${joinSegments(base, encodeURI(slug2))}</link>
      <guid>https://${joinSegments(base, encodeURI(slug2))}</guid>
