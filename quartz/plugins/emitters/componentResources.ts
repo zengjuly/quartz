@@ -328,7 +328,7 @@ export const ComponentResources: QuartzEmitterPlugin = () => {
       // that everyone else had the chance to register a listener for it
       addGlobalPageResources(ctx, componentResources)
 
-      const useHashing = !ctx.argv.serve
+      const useHashing = !ctx.argv.serve && !ctx.cfg.configuration.disableResourceHashing
 
       // Separate global CSS (added by addGlobalPageResources, e.g. popover CSS)
       // from component CSS. Global CSS was pushed onto componentResources.css
@@ -362,7 +362,9 @@ export const ComponentResources: QuartzEmitterPlugin = () => {
 
         for (let i = 0; i < scripts.length; i++) {
           const hash = hashContent(scripts[i])
-          const slug = `static/scripts/script-${i}-${hash}`
+          const slug = useHashing
+            ? `static/scripts/script-${i}-${hash}`
+            : `static/scripts/script-${i}`
           const filename = `${slug}.js`
           scriptFilenames.push(filename)
 
@@ -405,6 +407,7 @@ export const ComponentResources: QuartzEmitterPlugin = () => {
       }).code.toString()
 
       const cssStringToFilename = new Map<string, string>()
+      let componentIndex = 0
       for (const cssString of componentResources.componentCssStrings) {
         if (cssStringToFilename.has(cssString)) continue
 
@@ -418,7 +421,10 @@ export const ComponentResources: QuartzEmitterPlugin = () => {
         }).code.toString()
 
         const hash = hashContent(minified)
-        const slug = `component-${hash}`
+        componentIndex += 1
+        const slug = useHashing
+          ? `component-${hash}`
+          : `component-${componentIndex}`
         const filename = `${slug}.css`
         cssStringToFilename.set(cssString, filename)
 
@@ -436,6 +442,7 @@ export const ComponentResources: QuartzEmitterPlugin = () => {
       // This prevents large inline payloads (e.g. theme CSS) from being duplicated
       // into every HTML page's <head>.
       const extractedInlineResources = new Map<string, string>()
+      let resourceStyleIndex = 0
       for (const cssResource of resources.css) {
         if (!(cssResource.inline ?? false)) continue
 
@@ -453,7 +460,10 @@ export const ComponentResources: QuartzEmitterPlugin = () => {
         }
 
         const hash = hashContent(output)
-        const slug = `static/resource-style-${hash}`
+        resourceStyleIndex += 1
+        const slug = useHashing
+          ? `static/resource-style-${hash}`
+          : `static/resource-style-${resourceStyleIndex}`
         const filename = `${slug}.css`
         extractedInlineResources.set(cssResource.content, filename)
 
@@ -465,13 +475,17 @@ export const ComponentResources: QuartzEmitterPlugin = () => {
         })
       }
 
+      let resourceJsIndex = 0
       for (const jsResource of resources.js) {
         if (jsResource.contentType !== "inline") continue
 
         const minified = await joinScripts([jsResource.script])
         const hash = hashContent(minified)
         const loadTimePrefix = jsResource.loadTime === "beforeDOMReady" ? "before" : "after"
-        const slug = `static/resource-${loadTimePrefix}-${hash}`
+        resourceJsIndex += 1
+        const slug = useHashing
+          ? `static/resource-${loadTimePrefix}-${hash}`
+          : `static/resource-${loadTimePrefix}-${resourceJsIndex}`
         const filename = `${slug}.js`
         extractedInlineResources.set(jsResource.script, filename)
 

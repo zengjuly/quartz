@@ -71,6 +71,10 @@ export interface GlobalConfiguration {
    *   Quartz will avoid using this as much as possible and use relative URLs most of the time
    */
   baseUrl?: string
+  /** 关闭构建产物的 hash 文件名（index.css / component-N.css / script-N.js 等固定名）。
+   *   固定名保证未变化页面 HTML 字节稳定（资源引用不随内容 hash 变化）；
+   *   代价是浏览器缓存破坏依赖 ETag 验证而非文件名，站点需配 no-cache 缓存策略。 */
+  disableResourceHashing?: boolean
   theme: Theme
   /**
    * Allow to translate the date in the language of your choice.

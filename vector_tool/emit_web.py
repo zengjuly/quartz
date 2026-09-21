@@ -114,7 +114,7 @@ def main():
 
     mf = json.loads((shards / "manifest.json").read_text(encoding="utf-8"))
     web = {"format": "web-v1", "dim": mf["dim"], "model": mf["model"],
-           "metric": "cosine-int8", "updated": mf["updated"],
+           "metric": "cosine-int8",
            "files": {"model": "model.onnx", "tokenizer": "tokenizer.json"},
            "domains": []}
     for d in mf["domains"]:

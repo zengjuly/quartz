@@ -1,0 +1,22 @@
+diff --git a/node_modules/@quartz-community/content-index/dist/index.js b/node_modules/@quartz-community/content-index/dist/index.js
+index 5f7d374..a0cb8b4 100644
+--- a/node_modules/@quartz-community/content-index/dist/index.js
++++ b/node_modules/@quartz-community/content-index/dist/index.js
+@@ -2295,7 +2295,7 @@ function generateRSSFeed(cfg, idx, options, limit) {
+     <link>https://${joinSegments(base, encodeURI(slug2))}</link>
+     <guid>https://${joinSegments(base, encodeURI(slug2))}</guid>
+     <description><![CDATA[ ${content.richContent ?? content.description} ]]></description>
+-    <pubDate>${content.date?.toUTCString()}</pubDate>
++    <pubDate>${content.date ? content.date.toUTCString() : ""}</pubDate>
+   </item>`;
+   const items = Array.from(idx).sort(([_2, f1], [__, f2]) => {
+     if (f1.date && f2.date) {
+@@ -2328,7 +2328,7 @@ var ContentIndex = (opts) => {
+       const data = file.data ?? {};
+       if (data.unlisted === true) continue;
+       const slug2 = data.slug;
+-      const date = getDate(data) ?? /* @__PURE__ */ new Date();
++      const date = getDate(data);
+       const text2 = data.text;
+       if (options.includeEmptyFiles || text2 && text2 !== "") {
+         const frontmatter = data.frontmatter ?? {};

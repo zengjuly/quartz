@@ -39,6 +39,10 @@
           "type": "string",
           "description": "Base URL for the site"
         },
+        "disableResourceHashing": {
+          "type": "boolean",
+          "description": "Use fixed resource filenames (index.css / component-N.css) instead of content-hash filenames"
+        },
         "theme": {
           "type": "object",
           "required": ["fontOrigin", "cdnCaching", "typography", "colors"],

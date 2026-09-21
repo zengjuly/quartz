@@ -148,7 +148,11 @@ def get_model():
         _tok.enable_truncation(max_length=MAX_TOKENS)
         _tok.enable_padding(pad_id=0, pad_token="[PAD]")
         opts = ort.SessionOptions()
-        opts.intra_op_num_threads = max(1, os.cpu_count() - 1)
+        # 确定性要求：多线程 CPU 推理的浮点归约顺序随机，同一文本每次产生
+        # 不同字节向量 → pack 全量漂移进 git。单线程在同版本 onnxruntime 下
+        # 结果确定（代价：CI 嵌入速度下降，可接受）。
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
         _model = ort.InferenceSession(
             str(MODEL_DIR / "model_quantized.onnx"), opts,
             providers=["CPUExecutionProvider"])
@@ -408,7 +412,6 @@ def cmd_shard(args):
     manifest = {"vault": os.path.basename(os.path.abspath(args.vault)),
                 "dim": EMBED_DIM, "model": "bge-small-zh-v1.5",
                 "metric": "cosine-int8", "format": "int8+gzip-v1",
-                "updated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "domains": []}
     for dom in sorted(groups):
         db_path = out / f"{dom}.db"

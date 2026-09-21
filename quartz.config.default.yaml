@@ -8,6 +8,9 @@ configuration:
     provider: plausible
   locale: en-US
   baseUrl: quartz.jzhao.xyz
+  # 固定资源文件名（不用 hash/时间戳命名），保证未变化页面 HTML 字节稳定；
+  # 站点 nginx 需配 no-cache + ETag 验证代替文件名缓存破坏。
+  disableResourceHashing: true
   ignorePatterns:
     - private
     - templates
