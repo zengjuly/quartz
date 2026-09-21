@@ -51,7 +51,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12' # 与本地 venv 一致；onnxruntime==1.30.0 无 cp310 wheel（py3.10 装不上）
 
       - name: Install Python Dependencies
         # CI 修复：vector_tool/ 随主仓库 checkout 在 quartz-app/ 子目录下
