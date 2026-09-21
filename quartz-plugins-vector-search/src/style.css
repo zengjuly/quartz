@@ -39,7 +39,9 @@
   border-radius: 7px;
   box-shadow: 0 14px 50px rgba(27, 33, 48, 0.12), 0 10px 30px rgba(27, 33, 48, 0.16);
 }
-/* 遮罩：结果面板打开时压暗页面（与内置搜索的 backdrop-filter 一致） */
+/* 遮罩：结果面板打开时压暗页面（与内置搜索的 backdrop-filter 一致）
+   pointer-events:none 必需——伪元素属于 .vector-search，会吞掉全屏点击，
+   导致「点面板外关闭」失效且页面链接点不动。 */
 .vector-search:has(> .vector-results:not(:empty))::before {
   content: "";
   position: fixed;
@@ -47,6 +49,7 @@
   background: rgba(27, 33, 48, 0.12);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
+  pointer-events: none;
   z-index: calc(var(--search-z-index, 999) + 2);
 }
 @media (max-width: 800px) {
