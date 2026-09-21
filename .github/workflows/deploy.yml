@@ -63,6 +63,8 @@ jobs:
       # 4. 向量库构建：按领域拆分为多个小 sqlite（int8向量+gzip文本），
       #    产物 public/vector/<domain>.db + manifest.json，单库 KB~MB 级。
       #    替换旧 sync_vector.py（mock 向量 + 单文件全量下发）
+      #    输出到 RUNNER_TEMP 而非 public/：.db 是中间产物（含 mtime 等
+      #    每次构建必变的字段），留在 public 会让每个 db 每轮都进产物仓库。
       - name: Build Vector Shards
         run: |
           cd quartz-app
@@ -72,7 +74,7 @@ jobs:
           fi
           python vector_tool/kb_vec.py shard \
             --vault "$GITHUB_WORKSPACE/quartz-app/content" \
-            --out "$GITHUB_WORKSPACE/quartz-app/public/vector"
+            --out "$RUNNER_TEMP/vector-shards"
 
       # 4b. 前端检索包分发：把 shard 产物 + int8 模型 + tokenizer + ort wasm
       #     运行时统一拷进 public/vector-web/（前端插件 VEC_BASE 指向此目录）。
@@ -83,7 +85,7 @@ jobs:
         run: |
           cd quartz-app
           python vector_tool/emit_web.py \
-            --shards public/vector \
+            --shards "$RUNNER_TEMP/vector-shards" \
             --models vector_tool/models \
             --out public/vector-web \
             --vault-prefix "$GITHUB_WORKSPACE/quartz-app/content" \

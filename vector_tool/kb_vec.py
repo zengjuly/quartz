@@ -148,11 +148,12 @@ def get_model():
         _tok.enable_truncation(max_length=MAX_TOKENS)
         _tok.enable_padding(pad_id=0, pad_token="[PAD]")
         opts = ort.SessionOptions()
-        # 确定性要求：多线程 CPU 推理的浮点归约顺序随机，同一文本每次产生
-        # 不同字节向量 → pack 全量漂移进 git。单线程在同版本 onnxruntime 下
-        # 结果确定（代价：CI 嵌入速度下降，可接受）。
-        opts.intra_op_num_threads = 1
-        opts.inter_op_num_threads = 1
+        # 确定性说明：向量字节漂移的实测根因是 onnxruntime 版本变化（跨天
+        # CI 19-23% 字节差异），已由 requirements.txt 锁版本解决；同版本下
+        # 多线程/单线程结果一致（实测 0 差异），故保留多线程以维持 CI 速度
+        # （单线程会把 shard 步骤从 ~5min 拖到 ~34min）。
+        # 若未来再次观察到 pack 漂移，先查依赖版本，再考虑改 intra_op=1。
+        opts.intra_op_num_threads = max(1, (os.cpu_count() or 2) - 1)
         _model = ort.InferenceSession(
             str(MODEL_DIR / "model_quantized.onnx"), opts,
             providers=["CPUExecutionProvider"])
