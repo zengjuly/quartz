@@ -214,27 +214,46 @@ def iter_md(vault):
 
 
 def build_docs(db, files):
-    """增量嵌入 files（绝对路径列表），幂等：按 (path,mtime,hash) 跳过未变，
-    内容重复仅挂链接。返回 (n_docs, n_chunks, linked)。"""
-    have = {p: (h, m) for p, h, m in
-            db.execute("SELECT path, hash, mtime FROM docs")}
+    """增量嵌入 files（绝对路径列表），幂等：按内容 hash 跳过未变，
+    内容重复仅挂链接。返回 (n_docs, n_chunks, linked)。
+
+    注意：**只看 hash，不看 mtime**。CI 每次全新 checkout，文件 mtime 全是
+    checkout 时刻，用 mtime 做快速路径会让增量永远失效（每轮全量重嵌）。
+    """
+    have = {p: (h, m, n) for p, h, m, n in
+            db.execute("SELECT path, hash, mtime, n_chunks FROM docs")}
     embedded = {h: p for p, h in db.execute(
         "SELECT path, hash FROM docs WHERE n_chunks > 0")}
+    # 清理已从 vault 删除的文档：复用缓存 db 时必须清，否则 pack 里残留
+    # 死链（笔记已删、检索仍命中 404）
+    fileset = set(files)
+    stale = [p for p in have if p not in fileset]
+    for p in stale:
+        db.execute("DELETE FROM vec WHERE id IN (SELECT id FROM chunks WHERE doc_path=?)", (p,))
+        db.execute("DELETE FROM chunks WHERE doc_path=?", (p,))
+        db.execute("DELETE FROM docs WHERE path=?", (p,))
+        embedded.pop(have[p][0], None)   # 它可能曾是某 hash 的 canonical
+        have.pop(p, None)
+    if stale:
+        db.commit()
+        print(f"[build] 清理已删除文档 {len(stale)} 个", flush=True)
     todo = []       # (path, text, hash, canonical_or_None)
     linked = 0      # 内容重复、仅挂链接不重嵌
     for f in files:
         mt = os.path.getmtime(f)
         cur = have.get(f)
-        if cur and cur[1] == mt:
-            # mtime 未变：若内容 hash 曾被判定为重复但 canonical 变了，也要修
-            continue
         try:
             text = Path(f).read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         h = hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
         if cur and cur[0] == h:
-            db.execute("UPDATE docs SET mtime=? WHERE path=?", (mt, f))
+            if cur[2] == 0 and h not in embedded:
+                # 曾是"重复仅挂链接"，但其 canonical 已消失（被删/被改）
+                # → 必须重新嵌入，否则此文件永远检索不到
+                todo.append((f, text, h, None))
+            elif cur[1] != mt:
+                db.execute("UPDATE docs SET mtime=? WHERE path=?", (mt, f))
             continue
         canon = embedded.get(h)
         if canon and canon != f:
@@ -351,24 +370,37 @@ def shard_build_one(db, f, text, h):
 
 
 def shard_build_files(db, files):
-    """分库增量嵌入：与 build_docs 同语义（mtime/hash 跳过、重复内容仅挂链接）。"""
-    have = {p: (hh, m) for p, hh, m in
-            db.execute("SELECT path, hash, mtime FROM docs")}
+    """分库增量嵌入：与 build_docs 同语义（只看内容 hash、不看 mtime，
+    重复内容仅挂链接、已删文档清理）。"""
+    have = {p: (hh, m, n) for p, hh, m, n in
+            db.execute("SELECT path, hash, mtime, n_chunks FROM docs")}
     embedded = {hh: p for p, hh in db.execute(
         "SELECT path, hash FROM docs WHERE n_chunks > 0")}
+    fileset = set(files)
+    stale = [p for p in have if p not in fileset]
+    for p in stale:
+        db.execute("DELETE FROM emb WHERE id IN (SELECT id FROM chunks WHERE doc_path=?)", (p,))
+        db.execute("DELETE FROM chunks WHERE doc_path=?", (p,))
+        db.execute("DELETE FROM docs WHERE path=?", (p,))
+        embedded.pop(have[p][0], None)
+        have.pop(p, None)
+    if stale:
+        db.commit()
+        print(f"[shard] 清理已删除文档 {len(stale)} 个", flush=True)
     todo, linked = [], 0
     for f in files:
         mt = os.path.getmtime(f)
         cur = have.get(f)
-        if cur and cur[1] == mt:
-            continue
         try:
             text = Path(f).read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         h = hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
         if cur and cur[0] == h:
-            db.execute("UPDATE docs SET mtime=? WHERE path=?", (mt, f))
+            if cur[2] == 0 and h not in embedded:
+                todo.append((f, text, h))   # canonical 已消失 → 重新嵌入
+            elif cur[1] != mt:
+                db.execute("UPDATE docs SET mtime=? WHERE path=?", (mt, f))
             continue
         canon = embedded.get(h)
         if canon and canon != f:

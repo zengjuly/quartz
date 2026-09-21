@@ -33,11 +33,17 @@ def build_pack(db_path: Path, out_path: Path, vault_prefix: str = "") -> dict:
     db = sqlite3.connect(db_path)
     dim = int(db.execute("SELECT v FROM meta WHERE k='dim'").fetchone()[0])
     vault = str(Path(vault_prefix).resolve()) if vault_prefix else None
-    # chunk i = emb 按 id 升序的第 i 条；chunks 行一一对应
+    # 顺序必须由内容键决定，不能依赖自增 id 的插入顺序：增量构建（复用缓存
+    # db）会把重嵌文档的 chunk 追加到表尾，全量构建则按遍历顺序插入——同一
+    # vault 状态会产出不同 pack 字节（缓存命中/miss 之间来回跳变）。
+    # 按 (doc_path, id) 排序：同一文档的 chunk 总是一次性一起插入，其相对
+    # 顺序稳定，因此该键在两条构建路径下给出相同顺序。
+    order = "ORDER BY c.doc_path, c.id"
     rows = list(db.execute(
         "SELECT c.doc_path, c.heading, c.text FROM emb v "
-        "JOIN chunks c ON c.id=v.id ORDER BY v.id"))
-    vecs = [v for (v,) in db.execute("SELECT v FROM emb ORDER BY id")]
+        "JOIN chunks c ON c.id=v.id " + order))
+    vecs = [v for (v,) in db.execute(
+        "SELECT v FROM emb v JOIN chunks c ON c.id=v.id " + order)]
     db.close()
     if vault:
         # 绝对路径归一为 vault 相对路径（防把构建机路径烤进公开站）

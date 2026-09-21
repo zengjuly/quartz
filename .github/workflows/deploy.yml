@@ -60,6 +60,20 @@ jobs:
           cd quartz-app
           pip install -r vector_tool/requirements.txt
 
+      # 3b. 向量 shard 缓存：kb_vec 已改为按**内容 hash** 增量（不再看 mtime
+      #     ——CI 每次全新 checkout 的 mtime 都是新值，旧逻辑使增量永不命中，
+      #     每轮全量重嵌约 22 分钟）。复用上轮 db 后只重嵌真正变化的文档。
+      #     key 刻意**不含 obsdata 内容**：内容变化时仍命中旧缓存做增量；
+      #     restore-keys 前缀匹配让 kb_vec.py/依赖变化时也能拿到旧 db 做增量
+      #     （完全 miss 才会全量重建）。schema 变更时手工把 v1 升到 v2。
+      - name: Cache Vector Shards
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vector-shards
+          key: vector-shards-v1-${{ runner.os }}-${{ hashFiles('quartz-app/vector_tool/kb_vec.py', 'quartz-app/vector_tool/requirements.txt') }}
+          restore-keys: |
+            vector-shards-v1-${{ runner.os }}-
+
       # 4. 向量库构建：按领域拆分为多个小 sqlite（int8向量+gzip文本），
       #    产物 public/vector/<domain>.db + manifest.json，单库 KB~MB 级。
       #    替换旧 sync_vector.py（mock 向量 + 单文件全量下发）
