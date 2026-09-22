@@ -222,8 +222,6 @@ def build_docs(db, files):
     """
     have = {p: (h, m, n) for p, h, m, n in
             db.execute("SELECT path, hash, mtime, n_chunks FROM docs")}
-    embedded = {h: p for p, h in db.execute(
-        "SELECT path, hash FROM docs WHERE n_chunks > 0")}
     # 清理已从 vault 删除的文档：复用缓存 db 时必须清，否则 pack 里残留
     # 死链（笔记已删、检索仍命中 404）
     fileset = set(files)
@@ -232,13 +230,17 @@ def build_docs(db, files):
         db.execute("DELETE FROM vec WHERE id IN (SELECT id FROM chunks WHERE doc_path=?)", (p,))
         db.execute("DELETE FROM chunks WHERE doc_path=?", (p,))
         db.execute("DELETE FROM docs WHERE path=?", (p,))
-        embedded.pop(have[p][0], None)   # 它可能曾是某 hash 的 canonical
         have.pop(p, None)
     if stale:
         db.commit()
         print(f"[build] 清理已删除文档 {len(stale)} 个", flush=True)
     todo = []       # (path, text, hash, canonical_or_None)
     linked = 0      # 内容重复、仅挂链接不重嵌
+    # canonical 按 files 顺序（iter_md 排序）确定：同 hash 的首个文件为
+    # canonical 并嵌入，其余只挂链接。**同轮内也要去重**——否则"新增重复
+    # 文件"在增量路径（旧 db 已有 canonical → 挂链接）与全量路径（同轮都
+    # 嵌入）下产出不同 pack；顺序由 files 决定，两条路径结果一致。
+    canon_of = {}   # hash -> 本轮首个 path
     for f in files:
         mt = os.path.getmtime(f)
         cur = have.get(f)
@@ -247,20 +249,20 @@ def build_docs(db, files):
         except OSError:
             continue
         h = hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
-        if cur and cur[0] == h:
-            if cur[2] == 0 and h not in embedded:
-                # 曾是"重复仅挂链接"，但其 canonical 已消失（被删/被改）
-                # → 必须重新嵌入，否则此文件永远检索不到
-                todo.append((f, text, h, None))
-            elif cur[1] != mt:
+        if h in canon_of:
+            if cur is None or cur[2] != 0:
+                # 非 canonical 却带 chunks（历史同轮双份）→ 收敛为挂链接
+                todo.append((f, "", h, canon_of[h]))
+                linked += 1
+            continue
+        canon_of[h] = f
+        if cur and cur[0] == h and cur[2] > 0:
+            # 已是 canonical 且内容未变 → 跳过（仅刷新 mtime）
+            if cur[1] != mt:
                 db.execute("UPDATE docs SET mtime=? WHERE path=?", (mt, f))
             continue
-        canon = embedded.get(h)
-        if canon and canon != f:
-            todo.append((f, "", h, canon))
-            linked += 1
-        else:
-            todo.append((f, text, h, None))
+        # 新增 / 内容变化 / 原为挂链接（canonical 消失或顺序变了）→ 嵌入
+        todo.append((f, text, h, None))
     # 幂等修正：早期版本把根级散落文件的 domain 记成了文件名
     db.execute("UPDATE chunks SET domain='_root' WHERE domain LIKE '%.md'")
     db.execute("UPDATE docs SET domain='_root' WHERE domain LIKE '%.md'")
@@ -295,7 +297,6 @@ def build_docs(db, files):
         db.execute("INSERT OR REPLACE INTO docs VALUES(?,?,?,?,?,?)",
                    (f, rel_domain(f), meta.get("title") or Path(f).stem, h,
                     os.path.getmtime(f), len(chunks)))
-        embedded[h] = f
         db.commit()
         n_docs += 1
         n_chunks += len(chunks)
@@ -374,20 +375,18 @@ def shard_build_files(db, files):
     重复内容仅挂链接、已删文档清理）。"""
     have = {p: (hh, m, n) for p, hh, m, n in
             db.execute("SELECT path, hash, mtime, n_chunks FROM docs")}
-    embedded = {hh: p for p, hh in db.execute(
-        "SELECT path, hash FROM docs WHERE n_chunks > 0")}
     fileset = set(files)
     stale = [p for p in have if p not in fileset]
     for p in stale:
         db.execute("DELETE FROM emb WHERE id IN (SELECT id FROM chunks WHERE doc_path=?)", (p,))
         db.execute("DELETE FROM chunks WHERE doc_path=?", (p,))
         db.execute("DELETE FROM docs WHERE path=?", (p,))
-        embedded.pop(have[p][0], None)
         have.pop(p, None)
     if stale:
         db.commit()
         print(f"[shard] 清理已删除文档 {len(stale)} 个", flush=True)
     todo, linked = [], 0
+    canon_of = {}   # hash -> 本轮首个 path（canonical 按 files 顺序确定）
     for f in files:
         mt = os.path.getmtime(f)
         cur = have.get(f)
@@ -396,17 +395,16 @@ def shard_build_files(db, files):
         except OSError:
             continue
         h = hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
-        if cur and cur[0] == h:
-            if cur[2] == 0 and h not in embedded:
-                todo.append((f, text, h))   # canonical 已消失 → 重新嵌入
-            elif cur[1] != mt:
-                db.execute("UPDATE docs SET mtime=? WHERE path=?", (mt, f))
+        if h in canon_of:
+            if cur is None or cur[2] != 0:
+                db.execute("INSERT OR REPLACE INTO docs VALUES(?,?,?,?,?,0)",
+                           (f, rel_domain(f), Path(f).stem, h, mt))
+                linked += 1
             continue
-        canon = embedded.get(h)
-        if canon and canon != f:
-            db.execute("INSERT OR REPLACE INTO docs VALUES(?,?,?,?,?,0)",
-                       (f, rel_domain(f), Path(f).stem, h, mt))
-            linked += 1
+        canon_of[h] = f
+        if cur and cur[0] == h and cur[2] > 0:
+            if cur[1] != mt:
+                db.execute("UPDATE docs SET mtime=? WHERE path=?", (mt, f))
             continue
         todo.append((f, text, h))
     db.commit()
@@ -415,7 +413,6 @@ def shard_build_files(db, files):
     n_docs = n_chunks = 0
     for fi, (f, text, h) in enumerate(todo):
         n = shard_build_one(db, f, text, h)
-        embedded[h] = f
         n_docs += 1
         n_chunks += n
         if (fi + 1) % 100 == 0 or fi + 1 == len(todo):

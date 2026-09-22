@@ -100,10 +100,97 @@
   }
 
   // ---------- 资源 ----------
+  // 弹性加载：分片 Range 请求 + 失败重试（指数退避）+ Cache API 持久缓存
+  // + 实时进度回调。动机（2026-09-21 用户实测）：公网隧道下 24MB model.onnx
+  // / 26MB pack 多次在 11~18MB 处断流，普通 fetch 一次失败即全盘报废，
+  // UI 永远停在"正在加载语义模型…"。nginx 已支持 Range（默认 on），
+  // 分片越小单次失败重传的代价越小。
+  const CHUNK = 2 * 1024 * 1024        // 2MB 分片（隧道 RTT 高时仍可控）
+  const RETRIES = 8                    // 单分片最多重试次数（指数退避 0.5s 起）
+  const fetchTimers = {}               // path -> {received, total}
+  let progressCb = null                // ensureReady 设置，驱动 UI 进度条
+
+  function reportProgress(path, received, total) {
+    fetchTimers[path] = { received, total }
+    if (progressCb) progressCb()
+  }
+
+  async function fetchWithRetry(url, headers, attempt = 0) {
+    try {
+      const ctl = new AbortController()
+      const kill = () => ctl.abort()
+      const t = setTimeout(kill, 60000)           // 单请求 60s 硬超时（防永久悬挂）
+      let resp
+      try {
+        resp = await fetch(url, { ...headers, signal: ctl.signal })
+        if (!resp.ok) throw new Error("HTTP " + resp.status)
+        if (!resp.body) throw new Error("no body")
+        const reader = resp.body.getReader()
+        const chunks = []
+        let got = 0
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          chunks.push(value); got += value.byteLength
+        }
+        const buf = new Uint8Array(got)
+        let o = 0
+        for (const c of chunks) { buf.set(c, o); o += c.byteLength }
+        return buf
+      } finally { clearTimeout(t) }
+    } catch (e) {
+      if (attempt >= RETRIES) throw e
+      await new Promise(r2 => setTimeout(r2, Math.min(500 * 2 ** attempt, 8000)))
+      return fetchWithRetry(url, headers, attempt + 1)
+    }
+  }
+
   async function fetchBuf(p) {
-    const r = await fetch(VEC_BASE + p);
-    if (!r.ok) throw new Error(p + " HTTP " + r.status);
-    return r.arrayBuffer();
+    const url = VEC_BASE + p
+    // 1) Cache API 命中直接返回（持久缓存，浏览器重启后仍在）
+    const cache = "caches" in window ? await caches.open("vector-web-v1") : null
+    if (cache) {
+      const hit = await cache.match(url)
+      if (hit) {
+        const ab = await hit.arrayBuffer()
+        reportProgress(p, ab.byteLength, ab.byteLength)
+        return ab
+      }
+    }
+    // 2) HEAD 探测大小；不支持 Range 的服务器/代理回退整文件 fetch
+    let total = 0, accepts = false
+    try {
+      const h = await fetch(url, { method: "HEAD" })
+      if (h.ok) {
+        total = +(h.headers.get("content-length") || 0)
+        accepts = (h.headers.get("accept-ranges") || "").includes("bytes")
+      }
+    } catch (e) { /* HEAD 失败不阻塞，走整文件回退 */ }
+    if (!accepts || !total) {
+      const buf = await fetchWithRetry(url, {})
+      if (cache) { try { await cache.put(url, new Response(buf)) } catch (e) {} }
+      reportProgress(p, buf.length, buf.length)
+      return buf.buffer
+    }
+    // 3) 分片 Range 下载（每片独立重试；中断后下次仅补缺失分片）
+    const parts = new Array(Math.ceil(total / CHUNK))
+    const loaded = new Uint8Array(total)
+    let done = 0
+    reportProgress(p, 0, total)
+    for (let i = 0; i < parts.length; i++) {
+      const start = i * CHUNK
+      const end = Math.min(start + CHUNK, total) - 1
+      const b = await fetchWithRetry(url, {
+        method: "GET",
+        headers: { Range: `bytes=${start}-${end}` },
+      })
+      loaded.set(b, start)
+      done += b.length
+      reportProgress(p, done, total)
+    }
+    const out = loaded.buffer
+    if (cache) { try { await cache.put(url, new Response(out)) } catch (e) {} }
+    return out
   }
   const fetchJson = async (p) => JSON.parse(new TextDecoder().decode(await fetchBuf(p)));
 
@@ -170,9 +257,10 @@
     return new TextDecoder("utf-8").decode(out);
   }
 
-  async function ensureReady() {
+  async function ensureReady(onProgress) {
     if (state.ready) return;
     if (state.loading) return state.loading;
+    progressCb = typeof onProgress === "function" ? onProgress : null
     state.loading = (async () => {
       if (!ort) ort = await import(VEC_BASE + "ort/ort.bundle.min.mjs");
       configureOrt();
@@ -188,11 +276,13 @@
         state.packs.push({ domain: d.domain, pack: decodePack(await fetchBuf(d.file)) });
       }
       state.ready = true;
+      progressCb = null
     })();
     try {
       await state.loading;
     } catch (e) {
       state.loading = null;
+      progressCb = null
       throw e;
     }
   }
@@ -252,11 +342,20 @@
   async function runSearch(query, box) {
     const mySeq = ++seq;
     if (!query || !query.trim()) { box.innerHTML = ""; return; }
-    box.innerHTML = '<div class="vs-status">正在加载语义模型（首次 ~25MB，之后浏览器缓存）…</div>';
+    box.innerHTML = '<div class="vs-status">正在加载语义模型（首次 ~70MB，之后浏览器缓存）…</div>';
     try {
-      await ensureReady();
+      await ensureReady(() => {
+        if (mySeq !== seq) return;
+        let got = 0, tot = 0;
+        for (const k in fetchTimers) { got += fetchTimers[k].received; tot += fetchTimers[k].total }
+        if (tot > 0) {
+          const pct = Math.round((got / tot) * 100)
+          box.innerHTML = '<div class="vs-status">正在加载语义模型 ' + pct + '%（' +
+            (got / 1048576).toFixed(1) + ' / ' + (tot / 1048576).toFixed(1) + ' MB）…</div>'
+        }
+      });
     } catch (e) {
-      if (mySeq === seq) box.innerHTML = '<div class="vs-status vs-error">向量库加载失败：' + e.message + "</div>";
+      if (mySeq === seq) box.innerHTML = '<div class="vs-status vs-error">向量库加载失败：' + e.message + "；请重试（弱网下会自动断点续传）</div>";
       return;
     }
     if (mySeq !== seq) return;
