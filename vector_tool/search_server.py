@@ -34,6 +34,10 @@ STATE = {"mtime": None, "packs": [], "meta": None}  # packs: [{domain, n, dim, v
 _PATH_HEAD_BOOST = 0.12    # 查询 token 命中 doc_path/heading
 _TEXT_BOOST = 0.03         # 命中正文
 _BOOST_CAP = 0.6
+_MAX_BODY = 4096           # POST body 上限（防恶意大包）
+_CACHE = {}                # (q, k) -> results（热点查询缓存）
+_CACHE_ORDER = []          # LRU 顺序
+_CACHE_MAX = 128
 _STOP = {"[CLS]", "[SEP]", "[PAD]", "[UNK]", "[MASK]"}
 
 
@@ -98,7 +102,7 @@ def search(q: str, k: int):
     hits = []
     for pk in STATE["packs"]:
         sims = pk["vecs"] @ q8
-        kk = min(k * 2, pk["n"])          # 先取每库 2k，避免 boost 后漏掉
+        kk = min(k * 4, pk["n"])          # 先取每库 4k，避免 boost 后漏掉
         if kk <= 0:
             continue
         top = np.argpartition(-sims, kk - 1)[:kk]
@@ -122,7 +126,49 @@ def search(q: str, k: int):
             score = vec_score + min(boost, _BOOST_CAP)
             hits.append((score, pk["domain"], doc, head, text, vec_score))
     hits.sort(key=lambda r: -r[0])
-    return hits[:k]
+    # 同文档去重：同一 doc_path 只保留最高分条目（避免一篇占多卡）。
+    seen, out = set(), []
+    for h in hits:
+        if h[2] in seen:
+            continue
+        seen.add(h[2])
+        out.append(h)
+        if len(out) >= k:
+            break
+    return out
+
+
+def cache_get(key):
+    if key in _CACHE:
+        _CACHE_ORDER.remove(key)
+        _CACHE_ORDER.append(key)
+        return _CACHE[key]
+    return None
+
+
+def cache_put(key, val):
+    if key in _CACHE:
+        _CACHE_ORDER.remove(key)
+    _CACHE[key] = val
+    _CACHE_ORDER.append(key)
+    while len(_CACHE_ORDER) > _CACHE_MAX:
+        old = _CACHE_ORDER.pop(0)
+        _CACHE.pop(old, None)
+
+
+def cache_clear():
+    _CACHE.clear()
+    _CACHE_ORDER.clear()
+
+
+def search_cached(q: str, k: int):
+    key = (q, k)
+    got = cache_get(key)
+    if got is not None:
+        return got
+    out = search(q, k)
+    cache_put(key, out)
+    return out
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -145,6 +191,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/api/search":
             self.send_response(404); self.end_headers(); return
         ln = int(self.headers.get("Content-Length") or 0)
+        if ln > _MAX_BODY:
+            self.send_response(413); self.end_headers(); return
         try:
             body = json.loads(self.rfile.read(ln) or b"{}")
             q = str(body.get("q") or "").strip()
@@ -154,9 +202,11 @@ class Handler(BaseHTTPRequestHandler):
         if not q:
             resp = {"results": [], "error": "empty query"}
         else:
-            reload_if_changed(pack_dir)
+            changed = reload_if_changed(pack_dir)
+            if changed:
+                cache_clear()
             t0 = time.time()
-            hits = search(q, k)
+            hits = search_cached(q, k)
             resp = {
                 "results": [
                     {"score": round(h[0], 4), "vec": round(h[5], 4),
@@ -190,6 +240,10 @@ def main():
         sys.exit(1)
     n = sum(p["n"] for p in STATE["packs"])
     print(f"[search_server] 加载 {len(STATE['packs'])} 个 pack, {n} chunks, 端口 {args.port}")
+    # 预热模型/分词器：首查不必背 onnxruntime 初始化（实测首查 259ms → 预热后稳定 ~25ms）
+    t0 = time.time()
+    kb_vec.embed(["预热"], is_query=True)
+    print(f"[search_server] 模型预热完成 {time.time()-t0:.1f}s，就绪")
     ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
 
 

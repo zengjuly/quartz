@@ -54,12 +54,18 @@
       const data = await r.json();
       if (mySeq !== seq) return;
       const hits = data.results || [];
-      if (!hits.length) { box.innerHTML = '<div class="vs-status">无结果。</div>'; return; }
+      if (!hits.length) { box.innerHTML = '<div class="vs-status">无结果。试试换个词。</div>'; return; }
 
       const html = [];
+      const seen = new Set();
       for (const h of hits) {
+        if (seen.has(h.doc_path)) continue;      // 双保险：同文档只出一卡
+        seen.add(h.doc_path);
         const url = docPathToUrl(h.doc_path);
-        const title = h.heading || h.doc_path.split("/").pop().replace(/\.md$/i, "");
+        // 标题优先文档文件名（短、稳定）；heading 太长时不用
+        const fileTitle = h.doc_path.split("/").pop().replace(/\.md$/i, "")
+          .replace(/^\d{3}-/, "");
+        const title = (h.heading && h.heading.length <= 24) ? h.heading : fileTitle;
         const snip = (h.text || "").replace(/[#>*`\[\]!]/g, "").replace(/\s+/g, " ").trim().slice(0, 150);
         html.push(
           '<a class="result-card" href="' + url + '">' +
