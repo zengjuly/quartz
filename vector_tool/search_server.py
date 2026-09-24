@@ -29,10 +29,13 @@ import kb_vec
 PACK_DIR = Path(kb_vec.MODEL_DIR.parent)  # vector_tool/models -> vector_tool；下方被 args 覆盖
 TOP_K_DEFAULT = 8
 LOCK = threading.Lock()
-STATE = {"mtime": None, "packs": [], "meta": None}  # packs: [{domain, n, dim, vecs, paths, heads, texts}]
+STATE = {"mtime": None, "packs": [], "meta": None, "loading": False}  # packs: [{domain, n, dim, vecs, paths, heads, texts}]
 
-_PATH_HEAD_BOOST = 0.12    # 查询 token 命中 doc_path/heading
-_TEXT_BOOST = 0.03         # 命中正文
+_PATH_BOOST = 0.12         # 查询 token 命中 doc_path（多字，目录名强信号）
+_PATH_SINGLE = 0.08        # 命中 doc_path（单字，弱信号——防"着至教论"式误报）
+_HEAD_BOOST = 0.12         # 命中 heading（多字 token）
+_HEAD_SINGLE = 0.06        # 命中 heading（单字 token，弱信号，防"着至教论"式误报）
+_TEXT_BOOST = 0.03         # 命中正文（仅多字 token）
 _BOOST_CAP = 0.6
 _MAX_BODY = 4096           # POST body 上限（防恶意大包）
 _CACHE = {}                # (q, k) -> results（热点查询缓存）
@@ -67,6 +70,8 @@ def load_pack(path: Path):
 
 
 def reload_if_changed(pack_dir: Path, force=False):
+    """检测 pack 变化 → 后台线程加载（原子替换），请求不卡 1s 重载。
+    加载失败不抛：保留旧 packs 继续服务。"""
     files = sorted(pack_dir.glob("*.pack.bin"))
     if not files:
         return False
@@ -74,8 +79,24 @@ def reload_if_changed(pack_dir: Path, force=False):
     with LOCK:
         if not force and sig == STATE["mtime"]:
             return False
-        STATE["packs"] = [load_pack(p) for p in files]
-        STATE["mtime"] = sig
+        if STATE.get("loading"):
+            return True                      # 已在后台加载，避免重复线程
+        STATE["loading"] = True
+
+    def do_load():
+        try:
+            packs = [load_pack(p) for p in files]
+            with LOCK:
+                STATE["packs"] = packs
+                STATE["mtime"] = sig
+                cache_clear()
+                STATE["loading"] = False
+        except Exception as e:
+            with LOCK:
+                STATE["loading"] = False
+            print(f"[search_server] 重载失败(保留旧数据): {e}", file=sys.stderr)
+
+    threading.Thread(target=do_load, daemon=True).start()
     return True
 
 
@@ -119,9 +140,14 @@ def search(q: str, k: int):
             for t in toks:
                 if not t:
                     continue
-                if t in doc or (head and t in head):
-                    boost += _PATH_HEAD_BOOST
-                elif t in text:
+                if t in doc:
+                    boost += _PATH_BOOST if len(t) > 1 else _PATH_SINGLE
+                elif head and t in head:
+                    boost += _HEAD_BOOST if len(t) > 1 else _HEAD_SINGLE
+                # 单字（如"教""你"）命中正文不再加分——避免"着至教论"等
+                # 仅含单字的无关文档被 text boost 拉高（2026-09-24 实测
+                # 「教你」top3 混入中医「着至教论」）
+                elif len(t) > 1 and t in text:
                     boost += _TEXT_BOOST
             score = vec_score + min(boost, _BOOST_CAP)
             hits.append((score, pk["domain"], doc, head, text, vec_score))
@@ -177,7 +203,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/healthz":
-            body = b'{"ok":true}'
+            with LOCK:
+                n = sum(p["n"] for p in STATE["packs"])
+                body = json.dumps({"ok": True, "packs": len(STATE["packs"]),
+                                   "chunks": n, "cache": len(_CACHE),
+                                   "loading": STATE.get("loading", False)}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -207,6 +237,9 @@ class Handler(BaseHTTPRequestHandler):
                 cache_clear()
             t0 = time.time()
             hits = search_cached(q, k)
+            dt_ms = int((time.time() - t0) * 1000)
+            if dt_ms > 200:                     # 慢查询日志（systemd journal）
+                print(f"[search_server] slow q={q!r} k={k} {dt_ms}ms", file=sys.stderr)
             resp = {
                 "results": [
                     {"score": round(h[0], 4), "vec": round(h[5], 4),
@@ -214,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
                      "text": h[4][:4000]}
                     for h in hits
                 ],
-                "ms": int((time.time() - t0) * 1000),
+                "ms": dt_ms,
             }
         out = json.dumps(resp, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
@@ -236,10 +269,13 @@ def main():
     pack_dir = Path(args.pack_dir)
     ok = reload_if_changed(pack_dir, force=True)
     if not ok or not STATE["packs"]:
-        print(f"FATAL: 无 pack 可加载: {pack_dir}", file=sys.stderr)
-        sys.exit(1)
-    n = sum(p["n"] for p in STATE["packs"])
-    print(f"[search_server] 加载 {len(STATE['packs'])} 个 pack, {n} chunks, 端口 {args.port}")
+        # 启动容错：sync_public.sh 用 git reset --hard，有窗口期 pack 不存在；
+        # 保持运行，首个请求时再尝试加载（reload_if_changed 会重试）。
+        print(f"[search_server] 警告: 暂无 pack 可加载: {pack_dir}（请求时将重试）",
+              file=sys.stderr)
+    else:
+        n = sum(p["n"] for p in STATE["packs"])
+        print(f"[search_server] 加载 {len(STATE['packs'])} 个 pack, {n} chunks, 端口 {args.port}")
     # 预热模型/分词器：首查不必背 onnxruntime 初始化（实测首查 259ms → 预热后稳定 ~25ms）
     t0 = time.time()
     kb_vec.embed(["预热"], is_query=True)

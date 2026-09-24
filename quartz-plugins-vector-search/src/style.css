@@ -86,6 +86,11 @@
 .vs-mobile-toc .toc-header {
   display: none;
 }
+.vector-search .vs-hl {
+  background: rgba(255, 213, 79, .38);
+  border-radius: 3px;
+  padding: 0 1px;
+}
 .vector-search .vs-status {
   padding: 0.5em 0.9em;
   color: var(--gray);

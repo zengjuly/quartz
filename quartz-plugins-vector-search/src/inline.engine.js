@@ -58,6 +58,12 @@
 
       const html = [];
       const seen = new Set();
+      const qRaw = query.trim();
+      const hl = (s) => {                       // 查询词高亮（s 已 esc）
+        const q = esc(qRaw);
+        if (!q || !s.includes(q)) return s;
+        return s.split(q).join('<mark class="vs-hl">' + q + "</mark>");
+      };
       for (const h of hits) {
         if (seen.has(h.doc_path)) continue;      // 双保险：同文档只出一卡
         seen.add(h.doc_path);
@@ -69,8 +75,8 @@
         const snip = (h.text || "").replace(/[#>*`\[\]!]/g, "").replace(/\s+/g, " ").trim().slice(0, 150);
         html.push(
           '<a class="result-card" href="' + url + '">' +
-          '<h3 class="card-title">' + esc(title) + "</h3>" +
-          '<p class="card-description">' + esc(snip) + "</p>" +
+          '<h3 class="card-title">' + hl(esc(title)) + "</h3>" +
+          '<p class="card-description">' + hl(esc(snip)) + "</p>" +
           '<p class="vs-meta">' + esc((h.domain || "").replace(/\.pack$/, "")) + " · " + esc(h.doc_path) +
           " · 相似度 " + h.score.toFixed(3) + "</p></a>");
       }
