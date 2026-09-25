@@ -49,6 +49,9 @@ _STOP = {"[CLS]", "[SEP]", "[PAD]", "[UNK]", "[MASK]"}
 _QUERIES = 0               # 累计查询数
 _CACHE_HITS = 0            # 缓存命中数
 _QUERY_LOCK = threading.Lock()
+_SUG_CACHE = {}            # suggest LRU（前缀 → 建议列表）
+_SUG_ORDER = []
+_SUG_MAX = 128
 
 
 def load_pack(path: Path):
@@ -155,6 +158,7 @@ def load_aliases_if_changed(force=False):
             data.pop("_comment", None)
             STATE["aliases"] = data
             STATE["alias_mtime"] = sig
+            suggest_clear()          # 常用词/建议依赖别名表，改了表要重算
             return True
         except Exception as e:
             print(f"[search_server] 别名表加载失败(保留旧表): {e}", file=sys.stderr)
@@ -208,20 +212,25 @@ def search(q: str, k: int):
             text = pk["texts"][int(i)]
             vec_score = float(sims[int(i)]) / (127 * 127)
             boost = 0.0
+            why = ""                            # 最强命中来源：path > head > text
             for t in toks:
                 if not t:
                     continue
                 if t in doc:
                     boost += _PATH_BOOST if len(t) > 1 else _PATH_SINGLE
+                    why = why or "path"
                 elif head and t in head:
                     boost += _HEAD_BOOST if len(t) > 1 else _HEAD_SINGLE
+                    why = why or "head"
                 # 单字（如"教""你"）命中正文不再加分——避免"着至教论"等
                 # 仅含单字的无关文档被 text boost 拉高（2026-09-24 实测
                 # 「教你」top3 混入中医「着至教论」）
                 elif len(t) > 1 and t in text:
                     boost += _TEXT_BOOST
+                    why = why or "text"
             score = vec_score + min(boost, _BOOST_CAP)
-            hits.append((score, pk["domain"], doc, head, text, vec_score))
+            hits.append((score, pk["domain"], doc, head, text, vec_score,
+                         why, round(min(boost, _BOOST_CAP), 4)))
     hits.sort(key=lambda r: -r[0])
     # 同文档去重：同一 doc_path 只保留最高分条目（避免一篇占多卡）。
     seen, out = set(), []
@@ -265,6 +274,34 @@ def suggest(q: str, limit: int = 8):
     return out
 
 
+def suggest_cached(q: str, limit: int = 8):
+    """suggest 带 LRU 缓存：每次遍历 19800 条 chunk 约 60-90ms，
+    重复前缀（用户逐字输入时高频命中）直接命中缓存。"""
+    key = (q.strip().lower(), limit)
+    got = _SUG_CACHE.get(key)
+    if got is not None:
+        _SUG_ORDER.remove(key)
+        _SUG_ORDER.append(key)
+        return got
+    out = suggest(q, limit)
+    _SUG_CACHE[key] = out
+    _SUG_ORDER.append(key)
+    if len(_SUG_ORDER) > _SUG_MAX:
+        old = _SUG_ORDER.pop(0)
+        _SUG_CACHE.pop(old, None)
+    return out
+
+
+def suggest_clear():
+    _SUG_CACHE.clear()
+    _SUG_ORDER.clear()
+
+
+def hot_terms(limit: int = 8):
+    """常用词引导：别名表 key 前 limit 个（空查询时展示，帮用户起步）。"""
+    return [k for k in STATE["aliases"] if not k.startswith("_")][:limit]
+
+
 def cache_get(key):
     global _CACHE_HITS
     if key in _CACHE:
@@ -288,6 +325,7 @@ def cache_put(key, val):
 def cache_clear():
     _CACHE.clear()
     _CACHE_ORDER.clear()
+    suggest_clear()          # pack 变了 → 建议也要重算（文件名/别名可能已变）
 
 
 def search_cached(q: str, k: int):
@@ -326,9 +364,11 @@ class Handler(BaseHTTPRequestHandler):
                 from urllib.parse import parse_qs, urlparse
                 qs = parse_qs(urlparse(self.path).query).get("q", [""])[0].strip()
                 if not qs:
-                    body = b'{"suggestions":[]}'
+                    # 空查询 → 常用词引导（别名表 key）
+                    body = json.dumps({"suggestions": hot_terms()},
+                                      ensure_ascii=False).encode()
                 else:
-                    body = json.dumps({"suggestions": suggest(qs)},
+                    body = json.dumps({"suggestions": suggest_cached(qs)},
                                       ensure_ascii=False).encode()
             except Exception:
                 body = b'{"suggestions":[]}'
@@ -379,6 +419,7 @@ class Handler(BaseHTTPRequestHandler):
                     "results": [
                         {"score": round(h[0], 4), "vec": round(h[5], 4),
                          "domain": h[1], "doc_path": h[2], "heading": h[3],
+                         "why": h[6], "boost": h[7],
                          "text": h[4][:800]}
                         for h in hits
                     ],

@@ -57,24 +57,46 @@
       localStorage.setItem(HIST_KEY, JSON.stringify(h.slice(0, HIST_MAX)));
     } catch (e) { /* localStorage 不可用时静默 */ }
   }
+  // 常用词引导（服务端 /api/suggest 空查询返回别名表术语，内存缓存一次）
+  let HOT_CACHE = null;
+  function loadHot(cb) {
+    if (HOT_CACHE) { cb(HOT_CACHE); return; }
+    fetch(API_SUGGEST, { method: "GET" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { HOT_CACHE = (j && j.suggestions) || []; cb(HOT_CACHE); })
+      .catch(() => { HOT_CACHE = []; cb([]); });
+  }
   function renderHist(box, input) {
     const h = getHist();
-    if (!h.length) { box.innerHTML = ""; return; }
-    const chips = h.map((x) =>
-      '<button class="vs-chip" type="button" data-q="' + esc(x) + '">' + esc(x) + "</button>").join("");
-    box.innerHTML = '<div class="vs-history">最近搜索：' + chips +
-      '<button class="vs-clear" type="button" title="清除历史">✕</button></div>';
-    box.querySelectorAll(".vs-chip").forEach((b) => b.addEventListener("click", () => {
-      const q2 = b.dataset.q;
-      input.value = q2;
-      runSearch(q2, box);
-    }));
-    const cl = box.querySelector(".vs-clear");
-    if (cl) cl.addEventListener("click", () => {
-      try { localStorage.removeItem(HIST_KEY); } catch (e) {}
-      box.innerHTML = "";
-      input.focus();
-    });
+    const bind = (sel, fn) => box.querySelectorAll(sel).forEach(fn);
+    const render = (hot) => {
+      if (!h.length && !hot.length) { box.innerHTML = ""; return; }
+      const histHtml = h.length
+        ? '<div class="vs-history">最近搜索：' + h.map((x) =>
+            '<button class="vs-chip" type="button" data-q="' + esc(x) + '">' + esc(x) + "</button>").join("") +
+          '<button class="vs-clear" type="button" title="清除历史">✕</button></div>'
+        : "";
+      const hotHtml = hot.length
+        ? '<div class="vs-hot">常用：' + hot.map((x) =>
+            '<button class="vs-chip" type="button" data-q="' + esc(x) + '">' + esc(x) + "</button>").join("") + "</div>"
+        : "";
+      box.innerHTML = histHtml + hotHtml;
+      bind(".vs-chip", (b) => b.addEventListener("click", () => {
+        const q2 = b.dataset.q;
+        input.value = q2;
+        runSearch(q2, box);
+      }));
+      const cl = box.querySelector(".vs-clear");
+      if (cl) cl.addEventListener("click", () => {
+        try { localStorage.removeItem(HIST_KEY); } catch (e) {}
+        box.innerHTML = "";
+        input.focus();
+        renderHist(box, input);
+      });
+    };
+    // 历史先渲染（即时），常用词到达后合并渲染
+    if (h.length) render([]);
+    loadHot((hot) => { if (!input.value.trim()) render(hot); });
   }
 
   // ---------- 检索 ----------
@@ -89,6 +111,13 @@
     input.value = "";
     box.innerHTML = "";
     input.blur();
+    document.body.style.removeProperty("overflow");   // 解锁背景滚动
+    document.body.style.removeProperty("padding-right");
+  }
+  function lockScroll() {                             // 面板有内容时锁背景滚动
+    const sw = window.innerWidth - document.documentElement.clientWidth;
+    document.body.style.overflow = "hidden";
+    if (sw > 0) document.body.style.paddingRight = sw + "px";  // 补滚动条宽度防跳动
   }
   async function runSearch(query, box, k) {
     const mySeq = ++seq;
@@ -170,15 +199,23 @@
         const raw = (h.text || "").replace(/[#>*`\[\]!]/g, "").replace(/\s+/g, " ").trim();
         const snip = near(raw, terms.length ? terms : [q2], 60);
         const pct = Math.max(0, Math.min(100, Math.round(h.score * 100)));
+        const whyTxt = h.why === "path" ? "路径命中" : h.why === "head" ? "标题命中"
+          : h.why === "text" ? "正文命中" : "";
+        const whyHtml = whyTxt
+          ? '<span class="vs-why" title="词汇加权来源">' + whyTxt +
+            (h.boost ? " +" + h.boost.toFixed(2) : "") + "</span>"
+          : "";
         html.push(
           '<a class="result-card" href="' + url + '">' +
           '<h3 class="card-title">' + hl(esc(title)) + "</h3>" +
           '<p class="card-description">' + hl(esc(snip)) + "</p>" +
           '<p class="vs-meta"><span class="vs-bar"><span class="vs-bar-fill" style="width:' + pct + '%"></span></span>' +
+          whyHtml +
           esc((h.domain || "").replace(/\.pack$/, "")) + " · " + esc(h.doc_path) +
           " · " + h.score.toFixed(3) + "</p></a>");
       }
       if (mySeq !== seq) return;
+      lockScroll();                        // 面板有内容 → 锁背景滚动
       const moreHtml = (hits.length >= kk && kk < 30)
         ? '<button class="vs-more" type="button">查看更多</button>' : "";
       box.innerHTML = sugHtml +
@@ -208,6 +245,11 @@
   // Quartz 在 <1200px 下 `.sidebar.right>.toc{display:none}` 隐藏目录，且右栏被
   // 排在正文之后。此处把 TOC 节点搬进正文顶部的 <details> 折叠块（桌面自动还原）。
   const tocWide = window.matchMedia("(min-width: 1200px)");
+  const TOC_OPEN_KEY = "vs-toc-open";
+  function tocOpenState() {
+    try { return localStorage.getItem(TOC_OPEN_KEY) !== "0"; }
+    catch (e) { return true; }               // 默认展开
+  }
   function placeToc() {
     const article = document.querySelector(".center article") || document.querySelector("article");
     if (!article) return;
@@ -219,11 +261,14 @@
       if (moved) return;
       const wrap = document.createElement("details");
       wrap.className = "vs-mobile-toc";
-      wrap.open = true;
+      wrap.open = tocOpenState();            // 记住上次展开/收起
       const sum = document.createElement("summary");
       sum.textContent = "目录";
       wrap.appendChild(sum);
       wrap.appendChild(toc);
+      wrap.addEventListener("toggle", () => {
+        try { localStorage.setItem(TOC_OPEN_KEY, wrap.open ? "1" : "0"); } catch (e) {}
+      });
       article.insertBefore(wrap, article.firstChild);
     } else if (moved) {
       const sb = document.querySelector(".sidebar.right");

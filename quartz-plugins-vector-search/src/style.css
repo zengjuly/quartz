@@ -136,6 +136,26 @@
   background: var(--secondary);
   border-radius: 3px;
 }
+.vector-search .vs-why {
+  display: inline-block;
+  margin-right: 0.4em;
+  padding: 0 0.4em;
+  font-size: 0.85em;
+  border-radius: 3px;
+  background: var(--lightgray);
+  color: var(--gray);
+  white-space: nowrap;
+}
+.vector-search .vs-hot {
+  padding: 0.4em 0.9em;
+  font-size: 0.85em;
+  color: var(--gray);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em;
+  border-bottom: 1px solid var(--lightgray);
+}
 .vector-search .vs-count {
   padding: 0.2em 0.9em;
   font-size: 0.85em;
