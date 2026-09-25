@@ -86,6 +86,22 @@
 .vs-mobile-toc .toc-header {
   display: none;
 }
+.vector-search .vs-count {
+  padding: 0.2em 0.9em;
+  font-size: 0.85em;
+  color: var(--gray);
+  border-bottom: 1px solid var(--lightgray);
+}
+.vector-search .vs-retry {
+  margin-left: 0.6em;
+  padding: 0.1em 0.7em;
+  font-size: 0.9em;
+  cursor: pointer;
+  border: 1px solid var(--gray);
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+}
 .vector-search .vs-hl {
   background: rgba(255, 213, 79, .38);
   border-radius: 3px;

@@ -50,20 +50,42 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ q: query.trim(), k: TOP_K }),
       });
-      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (!r.ok) {
+        if (mySeq !== seq) return;
+        box.innerHTML = '<div class="vs-status vs-error">检索失败（HTTP ' + r.status + '）。' +
+          '<button class="vs-retry" type="button">重试</button></div>';
+        const btn = box.querySelector(".vs-retry");
+        if (btn) btn.addEventListener("click", () => runSearch(query, box));
+        return;
+      }
       const data = await r.json();
       if (mySeq !== seq) return;
       const hits = data.results || [];
       if (!hits.length) { box.innerHTML = '<div class="vs-status">无结果。试试换个词。</div>'; return; }
+      const terms = (data.terms || []).filter((t) => t.length >= 1);
+      const hl = (s) => {                       // 查询词高亮（s 已 esc；terms 逐词高亮）
+        let out = s;
+        for (const t of terms) {
+          const qt = esc(t);
+          if (!qt || !out.includes(qt)) continue;
+          out = out.split(qt).join('<mark class="vs-hl">' + qt + "</mark>");
+        }
+        return out;
+      };
+      const near = (text, toks, w) => {          // 围绕首个命中词截 snippet
+        let at = -1;
+        for (const t of toks) {
+          if (!t) continue;
+          const i = text.indexOf(t);
+          if (i >= 0 && (at < 0 || i < at)) at = i;
+        }
+        if (at < 0) return text.slice(0, 150);
+        const s = Math.max(0, at - w);
+        return (s > 0 ? "…" : "") + text.slice(s, Math.min(text.length, at + w + 90));
+      };
 
       const html = [];
       const seen = new Set();
-      const qRaw = query.trim();
-      const hl = (s) => {                       // 查询词高亮（s 已 esc）
-        const q = esc(qRaw);
-        if (!q || !s.includes(q)) return s;
-        return s.split(q).join('<mark class="vs-hl">' + q + "</mark>");
-      };
       for (const h of hits) {
         if (seen.has(h.doc_path)) continue;      // 双保险：同文档只出一卡
         seen.add(h.doc_path);
@@ -72,7 +94,8 @@
         const fileTitle = h.doc_path.split("/").pop().replace(/\.md$/i, "")
           .replace(/^\d{3}-/, "");
         const title = (h.heading && h.heading.length <= 24) ? h.heading : fileTitle;
-        const snip = (h.text || "").replace(/[#>*`\[\]!]/g, "").replace(/\s+/g, " ").trim().slice(0, 150);
+        const raw = (h.text || "").replace(/[#>*`\[\]!]/g, "").replace(/\s+/g, " ").trim();
+        const snip = near(raw, terms.length ? terms : [query.trim()], 60);
         html.push(
           '<a class="result-card" href="' + url + '">' +
           '<h3 class="card-title">' + hl(esc(title)) + "</h3>" +
@@ -81,7 +104,7 @@
           " · 相似度 " + h.score.toFixed(3) + "</p></a>");
       }
       if (mySeq !== seq) return;
-      box.innerHTML = html.join("");
+      box.innerHTML = '<div class="vs-count">找到 ' + hits.length + ' 条相关结果</div>' + html.join("");
     } catch (e) {
       if (mySeq === seq) box.innerHTML = '<div class="vs-status vs-error">检索失败：' + (e && e.message ? e.message : String(e)) + "</div>";
     }
@@ -133,7 +156,7 @@
       let timer = null;
       input.addEventListener("input", () => {
         clearTimeout(timer);
-        timer = setTimeout(() => runSearch(input.value, box), 450);
+        timer = setTimeout(() => runSearch(input.value, box), 250);
       });
       input.addEventListener("keydown", (e) => {
         if (e.key === "Escape") { input.value = ""; box.innerHTML = ""; input.blur(); }

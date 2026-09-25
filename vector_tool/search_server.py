@@ -38,6 +38,8 @@ _HEAD_SINGLE = 0.06        # 命中 heading（单字 token，弱信号，防"着
 _TEXT_BOOST = 0.03         # 命中正文（仅多字 token）
 _BOOST_CAP = 0.6
 _MAX_BODY = 4096           # POST body 上限（防恶意大包）
+_MAX_CONCURRENT = 16       # 并发上限（超出 429，防打爆）
+_SEM = threading.BoundedSemaphore(_MAX_CONCURRENT)
 _CACHE = {}                # (q, k) -> results（热点查询缓存）
 _CACHE_ORDER = []          # LRU 顺序
 _CACHE_MAX = 128
@@ -101,18 +103,37 @@ def reload_if_changed(pack_dir: Path, force=False):
 
 
 def q_tokens(q: str):
-    """查询词切分：tokenizer tokens，合并 ## 续词。"""
+    """查询词切分：按原始空格分段 → 段内 tokenizer 分词（合并 ## 续词）→
+    段内连续中文单字合成词。保留词边界（\"量化 游资\"→[\"量化\",\"游资\"]，
+    不是\"量化游资\"）；合成词让 boost/高亮按词命中（\"教你\"→一个词），
+    避免单字误报（\"着至教论\"路径含\"教\"字不再命中\"教你\"）。"""
     _, tok = kb_vec.get_model()
-    toks = []
-    for t in tok.encode(q).tokens:
-        if t in _STOP:
+    out = []
+    for seg in re.split(r"\s+", q.strip()):
+        if not seg:
             continue
-        if t.startswith("##"):
-            if toks:
-                toks[-1] += t[2:]
-            continue
-        toks.append(t)
-    return toks
+        toks = []
+        for t in tok.encode(seg).tokens:
+            if t in _STOP:
+                continue
+            if t.startswith("##"):
+                if toks:
+                    toks[-1] += t[2:]
+                continue
+            toks.append(t)
+        merged, buf = [], ""
+        for t in toks:
+            if len(t) == 1 and "\u4e00" <= t <= "\u9fff":
+                buf += t
+            else:
+                if buf:
+                    merged.append(buf)
+                    buf = ""
+                merged.append(t)
+        if buf:
+            merged.append(buf)
+        out.extend(m for m in merged if m)
+    return out
 
 
 def search(q: str, k: int):
@@ -232,23 +253,35 @@ class Handler(BaseHTTPRequestHandler):
         if not q:
             resp = {"results": [], "error": "empty query"}
         else:
-            changed = reload_if_changed(pack_dir)
-            if changed:
-                cache_clear()
-            t0 = time.time()
-            hits = search_cached(q, k)
-            dt_ms = int((time.time() - t0) * 1000)
-            if dt_ms > 200:                     # 慢查询日志（systemd journal）
-                print(f"[search_server] slow q={q!r} k={k} {dt_ms}ms", file=sys.stderr)
-            resp = {
-                "results": [
-                    {"score": round(h[0], 4), "vec": round(h[5], 4),
-                     "domain": h[1], "doc_path": h[2], "heading": h[3],
-                     "text": h[4][:4000]}
-                    for h in hits
-                ],
-                "ms": dt_ms,
-            }
+            if not _SEM.acquire(blocking=False):
+                out = b'{"error":"busy","results":[]}'
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+                return
+            try:
+                changed = reload_if_changed(pack_dir)
+                if changed:
+                    cache_clear()
+                t0 = time.time()
+                hits = search_cached(q, k)
+                dt_ms = int((time.time() - t0) * 1000)
+                if dt_ms > 200:                     # 慢查询日志（systemd journal）
+                    print(f"[search_server] slow q={q!r} k={k} {dt_ms}ms", file=sys.stderr)
+                resp = {
+                    "terms": q_tokens(q),
+                    "results": [
+                        {"score": round(h[0], 4), "vec": round(h[5], 4),
+                         "domain": h[1], "doc_path": h[2], "heading": h[3],
+                         "text": h[4][:800]}
+                        for h in hits
+                    ],
+                    "ms": dt_ms,
+                }
+            finally:
+                _SEM.release()
         out = json.dumps(resp, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
