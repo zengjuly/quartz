@@ -86,6 +86,37 @@
 .vs-mobile-toc .toc-header {
   display: none;
 }
+.vector-search .vs-history {
+  padding: 0.4em 0.9em;
+  font-size: 0.85em;
+  color: var(--gray);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em;
+}
+.vector-search .vs-chip {
+  padding: 0.15em 0.7em;
+  font-size: 0.95em;
+  cursor: pointer;
+  border: 1px solid var(--lightgray);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+}
+.vector-search .vs-chip:hover {
+  border-color: var(--gray);
+  background: var(--lightgray);
+}
+.vector-search .vs-clear {
+  margin-left: auto;
+  padding: 0.1em 0.5em;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--gray);
+  font-size: 0.9em;
+}
 .vector-search .vs-count {
   padding: 0.2em 0.9em;
   font-size: 0.85em;

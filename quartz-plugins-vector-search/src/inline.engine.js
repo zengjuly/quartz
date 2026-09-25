@@ -38,11 +38,46 @@
     return base + "/" + slug;
   }
 
+  // ---------- 搜索历史（localStorage） ----------
+  const HIST_KEY = "vs-search-history";
+  const HIST_MAX = 10;
+  function getHist() {
+    try { const h = JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); return Array.isArray(h) ? h : []; }
+    catch (e) { return []; }
+  }
+  function addHist(q) {
+    try {
+      const h = getHist().filter((x) => x !== q);
+      h.unshift(q);
+      localStorage.setItem(HIST_KEY, JSON.stringify(h.slice(0, HIST_MAX)));
+    } catch (e) { /* localStorage 不可用时静默 */ }
+  }
+  function renderHist(box, input) {
+    const h = getHist();
+    if (!h.length) { box.innerHTML = ""; return; }
+    const chips = h.map((x) =>
+      '<button class="vs-chip" type="button" data-q="' + esc(x) + '">' + esc(x) + "</button>").join("");
+    box.innerHTML = '<div class="vs-history">最近搜索：' + chips +
+      '<button class="vs-clear" type="button" title="清除历史">✕</button></div>';
+    box.querySelectorAll(".vs-chip").forEach((b) => b.addEventListener("click", () => {
+      const q2 = b.dataset.q;
+      input.value = q2;
+      runSearch(q2, box);
+    }));
+    const cl = box.querySelector(".vs-clear");
+    if (cl) cl.addEventListener("click", () => {
+      try { localStorage.removeItem(HIST_KEY); } catch (e) {}
+      box.innerHTML = "";
+      input.focus();
+    });
+  }
+
   // ---------- 检索 ----------
   let seq = 0;
   async function runSearch(query, box) {
     const mySeq = ++seq;
-    if (!query || !query.trim()) { box.innerHTML = ""; return; }
+    if (!query || !query.trim()) { renderHist(box, document.querySelector(".vector-search > .search-bar")); return; }
+    addHist(query.trim());
     box.innerHTML = '<div class="vs-status">正在检索…</div>';
     try {
       const r = await fetch(API_BASE, {
@@ -160,6 +195,9 @@
       });
       input.addEventListener("keydown", (e) => {
         if (e.key === "Escape") { input.value = ""; box.innerHTML = ""; input.blur(); }
+      });
+      input.addEventListener("focus", () => {
+        if (!input.value.trim() && !box.querySelector(".vs-history")) renderHist(box, input);
       });
     });
     placeToc();

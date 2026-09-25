@@ -27,9 +27,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kb_vec
 
 PACK_DIR = Path(kb_vec.MODEL_DIR.parent)  # vector_tool/models -> vector_tool；下方被 args 覆盖
+ALIAS_FILE = Path(__file__).resolve().parent / "aliases.json"
 TOP_K_DEFAULT = 8
 LOCK = threading.Lock()
-STATE = {"mtime": None, "packs": [], "meta": None, "loading": False}  # packs: [{domain, n, dim, vecs, paths, heads, texts}]
+STATE = {"mtime": None, "packs": [], "meta": None, "loading": False,
+         "alias_mtime": None, "aliases": {}}  # packs: [{domain, n, dim, vecs, paths, heads, texts}]
 
 _PATH_BOOST = 0.12         # 查询 token 命中 doc_path（多字，目录名强信号）
 _PATH_SINGLE = 0.08        # 命中 doc_path（单字，弱信号——防"着至教论"式误报）
@@ -136,11 +138,56 @@ def q_tokens(q: str):
     return out
 
 
+def load_aliases_if_changed(force=False):
+    """加载/重载 aliases.json（mtime 检测，改别名无需重启服务）。"""
+    try:
+        sig = ALIAS_FILE.stat().st_mtime_ns
+    except OSError:
+        return False
+    with LOCK:
+        if not force and sig == STATE["alias_mtime"]:
+            return False
+        try:
+            data = json.loads(ALIAS_FILE.read_text(encoding="utf-8"))
+            data.pop("_comment", None)
+            STATE["aliases"] = data
+            STATE["alias_mtime"] = sig
+            return True
+        except Exception as e:
+            print(f"[search_server] 别名表加载失败(保留旧表): {e}", file=sys.stderr)
+            return False
+
+
+def expand_terms(q: str, terms):
+    """别名扩展：原始整串精确匹配 + 词级匹配，扩展词追加参与 boost/高亮。"""
+    extra = []
+    aliases = STATE["aliases"]
+    if not aliases:
+        return terms
+    qs = q.strip().lower()
+    aliases_l = {k.lower(): v for k, v in aliases.items()}
+    # 整串精确匹配（"教你炒股"→"教你炒股票"）
+    if qs in aliases_l:
+        extra.extend(aliases_l[qs])
+    # 词级匹配
+    for t in terms:
+        tl = t.lower()
+        if tl in aliases_l:
+            extra.extend(aliases_l[tl])
+    if not extra:
+        return terms
+    merged = list(terms)
+    for x in extra:
+        if x not in merged:
+            merged.append(x)
+    return merged
+
+
 def search(q: str, k: int):
     import numpy as np
     qv = kb_vec.embed([q], is_query=True)[0]
     q8 = np.round(qv * 127).astype(np.int32)
-    toks = q_tokens(q)
+    toks = expand_terms(q, q_tokens(q))
     hits = []
     for pk in STATE["packs"]:
         sims = pk["vecs"] @ q8
@@ -265,13 +312,14 @@ class Handler(BaseHTTPRequestHandler):
                 changed = reload_if_changed(pack_dir)
                 if changed:
                     cache_clear()
+                load_aliases_if_changed()
                 t0 = time.time()
                 hits = search_cached(q, k)
                 dt_ms = int((time.time() - t0) * 1000)
                 if dt_ms > 200:                     # 慢查询日志（systemd journal）
                     print(f"[search_server] slow q={q!r} k={k} {dt_ms}ms", file=sys.stderr)
                 resp = {
-                    "terms": q_tokens(q),
+                    "terms": expand_terms(q, q_tokens(q)),
                     "results": [
                         {"score": round(h[0], 4), "vec": round(h[5], 4),
                          "domain": h[1], "doc_path": h[2], "heading": h[3],
@@ -301,6 +349,8 @@ def main():
     args = ap.parse_args()
     pack_dir = Path(args.pack_dir)
     ok = reload_if_changed(pack_dir, force=True)
+    load_aliases_if_changed(force=True)
+    print(f"[search_server] 别名表 {len(STATE['aliases'])} 条")
     if not ok or not STATE["packs"]:
         # 启动容错：sync_public.sh 用 git reset --hard，有窗口期 pack 不存在；
         # 保持运行，首个请求时再尝试加载（reload_if_changed 会重试）。
