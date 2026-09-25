@@ -74,6 +74,17 @@
 
   // ---------- 检索 ----------
   let seq = 0;
+  function renderError(box, msg, query) {
+    box.innerHTML = '<div class="vs-status vs-error">检索失败：' + msg +
+      '<button class="vs-retry" type="button">重试</button></div>';
+    const btn = box.querySelector(".vs-retry");
+    if (btn) btn.addEventListener("click", () => runSearch(query, box));
+  }
+  function closePanel(input, box) {
+    input.value = "";
+    box.innerHTML = "";
+    input.blur();
+  }
   async function runSearch(query, box) {
     const mySeq = ++seq;
     if (!query || !query.trim()) { renderHist(box, document.querySelector(".vector-search > .search-bar")); return; }
@@ -87,10 +98,7 @@
       });
       if (!r.ok) {
         if (mySeq !== seq) return;
-        box.innerHTML = '<div class="vs-status vs-error">检索失败（HTTP ' + r.status + '）。' +
-          '<button class="vs-retry" type="button">重试</button></div>';
-        const btn = box.querySelector(".vs-retry");
-        if (btn) btn.addEventListener("click", () => runSearch(query, box));
+        renderError(box, "HTTP " + r.status, query);
         return;
       }
       const data = await r.json();
@@ -139,9 +147,15 @@
           " · 相似度 " + h.score.toFixed(3) + "</p></a>");
       }
       if (mySeq !== seq) return;
-      box.innerHTML = '<div class="vs-count">找到 ' + hits.length + ' 条相关结果</div>' + html.join("");
+      box.innerHTML = '<div class="vs-count"><span class="vs-n">找到 ' + hits.length + ' 条相关结果</span>' +
+        '<button class="vs-close" type="button" title="关闭">✕</button></div>' + html.join("");
+      const ic = box.querySelector(".vs-close");
+      if (ic) ic.addEventListener("click", () => {
+        const inp = document.querySelector(".vector-search > .search-bar");
+        if (inp) closePanel(inp, box);
+      });
     } catch (e) {
-      if (mySeq === seq) box.innerHTML = '<div class="vs-status vs-error">检索失败：' + (e && e.message ? e.message : String(e)) + "</div>";
+      if (mySeq === seq) renderError(box, (e && e.message ? e.message : String(e)), query);
     }
   }
 
@@ -194,8 +208,28 @@
         timer = setTimeout(() => runSearch(input.value, box), 250);
       });
       input.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") { input.value = ""; box.innerHTML = ""; input.blur(); }
+        if (e.key === "Escape") { closePanel(input, box); return; }
+        const cards = Array.from(box.querySelectorAll(".result-card"));
+        if (!cards.length) return;
+        let idx = cards.findIndex((c) => c.classList.contains("vs-active"));
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          idx = Math.min(idx + 1, cards.length - 1);
+          if (idx < 0) idx = 0;
+          activate(cards, idx);
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          idx = idx < 0 ? cards.length - 1 : idx - 1;
+          activate(cards, idx);
+        } else if (e.key === "Enter" && idx >= 0) {
+          e.preventDefault();
+          cards[idx].click();
+        }
       });
+      function activate(cards, idx) {
+        cards.forEach((c, i) => c.classList.toggle("vs-active", i === idx));
+        cards[idx].scrollIntoView({ block: "nearest" });
+      }
       input.addEventListener("focus", () => {
         if (!input.value.trim() && !box.querySelector(".vs-history")) renderHist(box, input);
       });
