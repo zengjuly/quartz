@@ -90,8 +90,9 @@
     box.innerHTML = "";
     input.blur();
   }
-  async function runSearch(query, box) {
+  async function runSearch(query, box, k) {
     const mySeq = ++seq;
+    const kk = k || TOP_K;
     if (!query || !query.trim()) { renderHist(box, document.querySelector(".vector-search > .search-bar")); return; }
     addHist(query.trim());
     box.innerHTML = '<div class="vs-status">正在检索…</div>';
@@ -101,7 +102,7 @@
         fetch(API_BASE, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ q: q2, k: TOP_K }),
+          body: JSON.stringify({ q: q2, k: kk }),
         }),
         fetch(API_SUGGEST + encodeURIComponent(q2)).catch(() => null),
       ]);
@@ -113,7 +114,6 @@
       const data = await r.json();
       if (mySeq !== seq) return;
       const hits = data.results || [];
-      if (!hits.length) { box.innerHTML = '<div class="vs-status">无结果。试试换个词。</div>'; return; }
       const terms = (data.terms || []).filter((t) => t.length >= 1);
       // 猜你想搜（suggest 中非当前查询的词）
       let sug = [];
@@ -123,6 +123,18 @@
           sug = (sj.suggestions || []).filter((s) => s !== q2);
         }
       } catch (e) { sug = []; }
+      const sugHtml = sug.length
+        ? '<div class="vs-suggest">猜你想搜：' + sug.slice(0, 5).map((s) =>
+            '<button class="vs-chip" type="button" data-q="' + esc(s) + '">' + esc(s) + "</button>").join("") + "</div>"
+        : "";
+      if (!hits.length) {
+        box.innerHTML = '<div class="vs-status">无结果。试试换个词。</div>' + sugHtml;
+        box.querySelectorAll(".vs-suggest .vs-chip").forEach((b) => b.addEventListener("click", () => {
+          const inp = document.querySelector(".vector-search > .search-bar");
+          if (inp) { inp.value = b.dataset.q; runSearch(b.dataset.q, box); }
+        }));
+        return;
+      }
       const hl = (s) => {                       // 查询词高亮（s 已 esc；terms 逐词高亮）
         let out = s;
         for (const t of terms) {
@@ -149,7 +161,8 @@
       for (const h of hits) {
         if (seen.has(h.doc_path)) continue;      // 双保险：同文档只出一卡
         seen.add(h.doc_path);
-        const url = docPathToUrl(h.doc_path);
+        const url = docPathToUrl(h.doc_path) +
+          (h.heading ? "#" + encodeURIComponent(h.heading) : "");   // 锚点直达命中章节
         // 标题优先文档文件名（短、稳定）；heading 太长时不用
         const fileTitle = h.doc_path.split("/").pop().replace(/\.md$/i, "")
           .replace(/^\d{3}-/, "");
@@ -166,13 +179,13 @@
           " · " + h.score.toFixed(3) + "</p></a>");
       }
       if (mySeq !== seq) return;
-      const sugHtml = sug.length
-        ? '<div class="vs-suggest">猜你想搜：' + sug.slice(0, 5).map((s) =>
-            '<button class="vs-chip" type="button" data-q="' + esc(s) + '">' + esc(s) + "</button>").join("") + "</div>"
-        : "";
+      const moreHtml = (hits.length >= kk && kk < 30)
+        ? '<button class="vs-more" type="button">查看更多</button>' : "";
       box.innerHTML = sugHtml +
         '<div class="vs-count"><span class="vs-n">找到 ' + hits.length + ' 条相关结果</span>' +
-        '<button class="vs-close" type="button" title="关闭">✕</button></div>' + html.join("");
+        '<button class="vs-close" type="button" title="关闭">✕</button></div>' + html.join("") + moreHtml;
+      const mb = box.querySelector(".vs-more");
+      if (mb) mb.addEventListener("click", () => runSearch(q2, box, kk + 22));
       const ic = box.querySelector(".vs-close");
       if (ic) ic.addEventListener("click", () => {
         const inp = document.querySelector(".vector-search > .search-bar");
@@ -226,12 +239,16 @@
   // ---------- UI 挂载 ----------
   function mount() {
     document.querySelectorAll(".vector-search").forEach((root) => {
-      if (root.dataset.vsMounted) return;
-      root.dataset.vsMounted = "1";
       const input = root.querySelector(".search-bar");
       const box = root.querySelector(".vector-results");
       if (!input || !box) return;
-      // 输入框清空按钮（✕，有内容时显示）
+      // 按 input 元素判断是否已绑定：Quartz 二次渲染会替换 input 节点，
+      // 若用 root 级标记则新 input 永不绑定（输入不搜索、?q= 直达失效）
+      if (input.dataset.vsBound) return;
+      input.dataset.vsBound = "1";
+      // 输入框清空按钮（✕，有内容时显示）——先清掉可能残留的旧节点
+      const stale = root.querySelector(".vs-clear-input");
+      if (stale) stale.remove();
       const clearBtn = document.createElement("button");
       clearBtn.type = "button";
       clearBtn.className = "vs-clear-input";
@@ -284,6 +301,15 @@
       input.addEventListener("focus", () => {
         if (!input.value.trim() && !box.querySelector(".vs-history")) renderHist(box, input);
       });
+      // URL 直达：?q=关键词 自动搜索（便于从外部链接分享/跳转）
+      try {
+        const qp = new URLSearchParams(location.search).get("q");
+        if (qp && qp.trim()) {
+          input.value = qp;
+          clearBtn.style.display = "block";
+          runSearch(qp, box);
+        }
+      } catch (e) { /* ignore */ }
     });
     placeToc();
   }
@@ -301,4 +327,21 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);
   else mount();
   document.addEventListener("nav", mount);
+  // 兜底：Quartz 会在 nav/渲染过程中重建导航栏 DOM（input 节点被替换），
+  // 仅靠 DOMContentLoaded/nav 可能绑不上新 input（表现为输入不搜索、?q= 失效）。
+  // 用 MutationObserver 节流（非防抖——页面持续变动时防抖会饿死定时器，
+  // 永远不触发），保证变化后 200ms 内必有一次 mount。
+  try {
+    let moLast = 0;
+    let moTimer = null;
+    const runMount = () => { moLast = Date.now(); mount(); };
+    const mo = new MutationObserver(() => {
+      if (Date.now() - moLast > 200) runMount();
+      else {
+        clearTimeout(moTimer);
+        moTimer = setTimeout(runMount, 200);
+      }
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+  } catch (e) { /* MutationObserver 不可用时忽略 */ }
 })();
