@@ -46,6 +46,9 @@ _CACHE = {}                # (q, k) -> results（热点查询缓存）
 _CACHE_ORDER = []          # LRU 顺序
 _CACHE_MAX = 128
 _STOP = {"[CLS]", "[SEP]", "[PAD]", "[UNK]", "[MASK]"}
+_QUERIES = 0               # 累计查询数
+_CACHE_HITS = 0            # 缓存命中数
+_QUERY_LOCK = threading.Lock()
 
 
 def load_pack(path: Path):
@@ -232,8 +235,40 @@ def search(q: str, k: int):
     return out
 
 
+def suggest(q: str, limit: int = 8):
+    """搜索建议：别名表 key 匹配 + 库内文件名包含匹配。"""
+    if not q or not STATE["packs"]:
+        return []
+    qs = q.strip().lower()
+    out, seen = [], set()
+    # 别名表 key
+    for k in STATE["aliases"]:
+        if qs in k.lower() or k.lower() in qs:
+            if k not in seen:
+                seen.add(k)
+                out.append(k)
+        if len(out) >= limit:
+            return out
+    # 库内文件名（通过 idx 段提取 doc_path；paths blob 无分隔符，不能 split）
+    for pk in STATE["packs"]:
+        idx = pk["idx"]
+        for b in range(0, pk["n"] * 4, 4):
+            ps, plen = int(idx[b]), int(idx[b + 1])
+            doc = pk["paths"][ps:ps + plen].decode("utf-8", "ignore")
+            base = doc.rsplit("/", 1)[-1].replace(".md", "")
+            base = re.sub(r"^\d{3}-", "", base)
+            if base and qs in base.lower() and base not in seen:
+                seen.add(base)
+                out.append(base)
+                if len(out) >= limit:
+                    return out
+    return out
+
+
 def cache_get(key):
+    global _CACHE_HITS
     if key in _CACHE:
+        _CACHE_HITS += 1
         _CACHE_ORDER.remove(key)
         _CACHE_ORDER.append(key)
         return _CACHE[key]
@@ -256,7 +291,10 @@ def cache_clear():
 
 
 def search_cached(q: str, k: int):
+    global _QUERIES
     key = (q, k)
+    with _QUERY_LOCK:
+        _QUERIES += 1
     got = cache_get(key)
     if got is not None:
         return got
@@ -275,15 +313,33 @@ class Handler(BaseHTTPRequestHandler):
                 n = sum(p["n"] for p in STATE["packs"])
                 body = json.dumps({"ok": True, "packs": len(STATE["packs"]),
                                    "chunks": n, "cache": len(_CACHE),
-                                   "loading": STATE.get("loading", False)}).encode()
+                                   "loading": STATE.get("loading", False),
+                                   "queries": _QUERIES, "cache_hits": _CACHE_HITS}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-        else:
-            self.send_response(404)
+            return
+        if self.path.startswith("/api/suggest"):
+            try:
+                from urllib.parse import parse_qs, urlparse
+                qs = parse_qs(urlparse(self.path).query).get("q", [""])[0].strip()
+                if not qs:
+                    body = b'{"suggestions":[]}'
+                else:
+                    body = json.dumps({"suggestions": suggest(qs)},
+                                      ensure_ascii=False).encode()
+            except Exception:
+                body = b'{"suggestions":[]}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(404)
+        self.end_headers()
 
     def do_POST(self):
         if self.path != "/api/search":

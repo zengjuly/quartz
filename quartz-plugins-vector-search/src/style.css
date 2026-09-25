@@ -6,13 +6,30 @@
 .vector-search > input.search-bar {
   width: 100%;
   box-sizing: border-box;
-  padding: 0.4em 0.8em;
+  padding: 0.4em 1.9em 0.4em 0.8em;   /* 右侧留清空按钮位置 */
   font-family: var(--bodyFont);
   color: var(--dark);
   font-size: 1em;
   border: 1px solid var(--lightgray);
   border-radius: 6px;
   background: var(--light);
+}
+.vector-search .vs-clear-input {
+  position: absolute;
+  right: 0.4em;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.4em;
+  height: 1.4em;
+  line-height: 1.2em;
+  text-align: center;
+  cursor: pointer;
+  border: none;
+  border-radius: 50%;
+  background: var(--lightgray);
+  color: var(--gray);
+  font-size: 0.8em;
+  padding: 0;
 }
 .vector-search > input.search-bar:focus {
   outline: none;
@@ -93,6 +110,32 @@
   color: var(--gray);
   font-size: 0.9em;
 }
+.vector-search .vs-suggest {
+  padding: 0.4em 0.9em;
+  font-size: 0.85em;
+  color: var(--gray);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em;
+  border-bottom: 1px solid var(--lightgray);
+}
+.vector-search .vs-bar {
+  display: inline-block;
+  vertical-align: middle;
+  width: 3em;
+  height: 0.45em;
+  border-radius: 3px;
+  background: var(--lightgray);
+  margin-right: 0.4em;
+  overflow: hidden;
+}
+.vector-search .vs-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--secondary);
+  border-radius: 3px;
+}
 .vector-search .vs-count {
   padding: 0.2em 0.9em;
   font-size: 0.85em;
@@ -158,6 +201,10 @@
   border-radius: 999px;
   background: transparent;
   color: inherit;
+  max-width: 13em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .vector-search .vs-chip:hover {
   border-color: var(--gray);

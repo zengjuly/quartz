@@ -13,6 +13,11 @@
       document.body?.dataset?.basepath) || "";
     return base + "/api/search";
   })();
+  const API_SUGGEST = (() => {
+    const base = (typeof document !== "undefined" &&
+      document.body?.dataset?.basepath) || "";
+    return base + "/api/suggest?q=";
+  })();
 
   // ---------- doc_path -> 站点 URL（对齐 slugifyFilePath/simplifySlug） ----------
   function slugifyPath(s) {
@@ -91,11 +96,15 @@
     addHist(query.trim());
     box.innerHTML = '<div class="vs-status">正在检索…</div>';
     try {
-      const r = await fetch(API_BASE, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: query.trim(), k: TOP_K }),
-      });
+      const q2 = query.trim();
+      const [r, sugR] = await Promise.all([
+        fetch(API_BASE, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ q: q2, k: TOP_K }),
+        }),
+        fetch(API_SUGGEST + encodeURIComponent(q2)).catch(() => null),
+      ]);
       if (!r.ok) {
         if (mySeq !== seq) return;
         renderError(box, "HTTP " + r.status, query);
@@ -106,6 +115,14 @@
       const hits = data.results || [];
       if (!hits.length) { box.innerHTML = '<div class="vs-status">无结果。试试换个词。</div>'; return; }
       const terms = (data.terms || []).filter((t) => t.length >= 1);
+      // 猜你想搜（suggest 中非当前查询的词）
+      let sug = [];
+      try {
+        if (sugR && sugR.ok) {
+          const sj = await sugR.json();
+          sug = (sj.suggestions || []).filter((s) => s !== q2);
+        }
+      } catch (e) { sug = []; }
       const hl = (s) => {                       // 查询词高亮（s 已 esc；terms 逐词高亮）
         let out = s;
         for (const t of terms) {
@@ -138,22 +155,34 @@
           .replace(/^\d{3}-/, "");
         const title = (h.heading && h.heading.length <= 24) ? h.heading : fileTitle;
         const raw = (h.text || "").replace(/[#>*`\[\]!]/g, "").replace(/\s+/g, " ").trim();
-        const snip = near(raw, terms.length ? terms : [query.trim()], 60);
+        const snip = near(raw, terms.length ? terms : [q2], 60);
+        const pct = Math.max(0, Math.min(100, Math.round(h.score * 100)));
         html.push(
           '<a class="result-card" href="' + url + '">' +
           '<h3 class="card-title">' + hl(esc(title)) + "</h3>" +
           '<p class="card-description">' + hl(esc(snip)) + "</p>" +
-          '<p class="vs-meta">' + esc((h.domain || "").replace(/\.pack$/, "")) + " · " + esc(h.doc_path) +
-          " · 相似度 " + h.score.toFixed(3) + "</p></a>");
+          '<p class="vs-meta"><span class="vs-bar"><span class="vs-bar-fill" style="width:' + pct + '%"></span></span>' +
+          esc((h.domain || "").replace(/\.pack$/, "")) + " · " + esc(h.doc_path) +
+          " · " + h.score.toFixed(3) + "</p></a>");
       }
       if (mySeq !== seq) return;
-      box.innerHTML = '<div class="vs-count"><span class="vs-n">找到 ' + hits.length + ' 条相关结果</span>' +
+      const sugHtml = sug.length
+        ? '<div class="vs-suggest">猜你想搜：' + sug.slice(0, 5).map((s) =>
+            '<button class="vs-chip" type="button" data-q="' + esc(s) + '">' + esc(s) + "</button>").join("") + "</div>"
+        : "";
+      box.innerHTML = sugHtml +
+        '<div class="vs-count"><span class="vs-n">找到 ' + hits.length + ' 条相关结果</span>' +
         '<button class="vs-close" type="button" title="关闭">✕</button></div>' + html.join("");
       const ic = box.querySelector(".vs-close");
       if (ic) ic.addEventListener("click", () => {
         const inp = document.querySelector(".vector-search > .search-bar");
         if (inp) closePanel(inp, box);
       });
+      box.querySelectorAll(".vs-suggest .vs-chip").forEach((b) => b.addEventListener("click", () => {
+        const q2b = b.dataset.q;
+        const inp = document.querySelector(".vector-search > .search-bar");
+        if (inp) { inp.value = q2b; runSearch(q2b, box); }
+      }));
     } catch (e) {
       if (mySeq === seq) renderError(box, (e && e.message ? e.message : String(e)), query);
     }
@@ -202,14 +231,39 @@
       const input = root.querySelector(".search-bar");
       const box = root.querySelector(".vector-results");
       if (!input || !box) return;
+      // 输入框清空按钮（✕，有内容时显示）
+      const clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+      clearBtn.className = "vs-clear-input";
+      clearBtn.title = "清空";
+      clearBtn.textContent = "✕";
+      clearBtn.style.display = "none";
+      input.parentNode.insertBefore(clearBtn, input.nextSibling);
+      clearBtn.addEventListener("click", () => {
+        input.value = "";
+        box.innerHTML = "";
+        clearBtn.style.display = "none";
+        input.focus();
+        renderHist(box, input);
+      });
       let timer = null;
       input.addEventListener("input", () => {
+        clearBtn.style.display = input.value ? "block" : "none";
         clearTimeout(timer);
         timer = setTimeout(() => runSearch(input.value, box), 250);
       });
       input.addEventListener("keydown", (e) => {
         if (e.key === "Escape") { closePanel(input, box); return; }
         const cards = Array.from(box.querySelectorAll(".result-card"));
+        if (e.key === "Enter") {
+          // IME 组合中（中文输入法选字）不拦截
+          if (e.isComposing || e.keyCode === 229) return;
+          e.preventDefault();
+          let idx = cards.findIndex((c) => c.classList.contains("vs-active"));
+          if (idx < 0) idx = 0;                 // 无选中 → 直达第一个
+          if (cards[idx]) cards[idx].click();
+          return;
+        }
         if (!cards.length) return;
         let idx = cards.findIndex((c) => c.classList.contains("vs-active"));
         if (e.key === "ArrowDown") {
@@ -221,9 +275,6 @@
           e.preventDefault();
           idx = idx < 0 ? cards.length - 1 : idx - 1;
           activate(cards, idx);
-        } else if (e.key === "Enter" && idx >= 0) {
-          e.preventDefault();
-          cards[idx].click();
         }
       });
       function activate(cards, idx) {
