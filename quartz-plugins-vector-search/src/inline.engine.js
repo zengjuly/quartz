@@ -173,16 +173,32 @@
         }
         return out;
       };
-      const near = (text, toks, w) => {          // 围绕首个命中词截 snippet
-        let at = -1;
-        for (const t of toks) {
+      const near = (text, toks, w) => {          // snippet：覆盖最多命中词的最短窗口
+        const lower = text.toLowerCase();
+        const pos = [];
+        for (const t of toks) {                  // 收集所有命中位置（多词多位置）
           if (!t) continue;
-          const i = text.indexOf(t);
-          if (i >= 0 && (at < 0 || i < at)) at = i;
+          const tl = t.toLowerCase();
+          let i = -1;
+          while ((i = lower.indexOf(tl, i + 1)) !== -1) pos.push(i);
         }
-        if (at < 0) return text.slice(0, 150);
-        const s = Math.max(0, at - w);
-        return (s > 0 ? "…" : "") + text.slice(s, Math.min(text.length, at + w + 90));
+        if (!pos.length) return text.slice(0, 150);
+        // 暴力枚举起止命中点，选覆盖词数最多、其次最短的窗口
+        let best = null;
+        for (const s of pos) {
+          for (const e of pos) {
+            if (e < s) continue;
+            const covered = pos.filter((p) => p >= s && p <= e).length;
+            if (!best || covered > best.covered ||
+                (covered === best.covered && e - s < best.len)) {
+              best = { s, e, covered, len: e - s };
+            }
+          }
+        }
+        const start = Math.max(0, best.s - w);
+        const end = Math.min(text.length, best.e + w);
+        return (start > 0 ? "…" : "") + text.slice(start, end) +
+          (end < text.length ? "…" : "");
       };
 
       const html = [];
@@ -330,13 +346,18 @@
         let idx = cards.findIndex((c) => c.classList.contains("vs-active"));
         if (e.key === "ArrowDown") {
           e.preventDefault();
-          idx = Math.min(idx + 1, cards.length - 1);
-          if (idx < 0) idx = 0;
+          idx = idx < 0 ? 0 : (idx + 1) % cards.length;   // 循环：末尾回到第一个
           activate(cards, idx);
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
-          idx = idx < 0 ? cards.length - 1 : idx - 1;
+          idx = idx < 0 ? cards.length - 1 : (idx - 1 + cards.length) % cards.length; // 循环
           activate(cards, idx);
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          activate(cards, 0);
+        } else if (e.key === "End") {
+          e.preventDefault();
+          activate(cards, cards.length - 1);
         }
       });
       function activate(cards, idx) {

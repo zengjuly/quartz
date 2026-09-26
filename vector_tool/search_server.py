@@ -29,6 +29,7 @@ import kb_vec
 PACK_DIR = Path(kb_vec.MODEL_DIR.parent)  # vector_tool/models -> vector_tool；下方被 args 覆盖
 ALIAS_FILE = Path(__file__).resolve().parent / "aliases.json"
 TOP_K_DEFAULT = 8
+TOP_K_MAX = 30             # 「查看更多」上限；缓存按此完整计算，按 k 截断共享
 LOCK = threading.Lock()
 STATE = {"mtime": None, "packs": [], "meta": None, "loading": False,
          "alias_mtime": None, "aliases": {}}  # packs: [{domain, n, dim, vecs, paths, heads, texts}]
@@ -330,8 +331,11 @@ def cache_clear():
 
 
 def search_cached(q: str, k: int):
+    """带缓存检索。缓存键只含 q（不含 k）：结果统一按 TOP_K_MAX（30）计算
+    存储，返回时按需截断——客户端 k=8 首查后点「查看更多」k=30 直接命中缓存，
+    不再重复全量计算（旧实现键含 k，8/30 各算一遍）。"""
     global _QUERIES
-    key = (q, k)
+    key = q
     with _QUERY_LOCK:
         _QUERIES += 1
         _QUERY_FREQ[q] = _QUERY_FREQ.get(q, 0) + 1
@@ -339,10 +343,10 @@ def search_cached(q: str, k: int):
             _QUERY_FREQ.pop(next(iter(_QUERY_FREQ)))
     got = cache_get(key)
     if got is not None:
-        return got
-    out = search(q, k)
+        return got[:k]
+    out = search(q, TOP_K_MAX)
     cache_put(key, out)
-    return out
+    return out[:k]
 
 
 class Handler(BaseHTTPRequestHandler):
