@@ -98,6 +98,22 @@
   .vector-search .vector-results .vs-close {
     display: inline-block;
   }
+  /* 移动端触控目标放大：chips 与结果卡更易点中（≥44px 高度）。
+     特异性必须高于基础规则（.vector-search .vs-chip）——媒体块在源文件中
+     位于基础规则之前，同特异性时后者覆盖前者（同 vs-close 的坑） */
+  .vector-search .vector-results .vs-chip {
+    padding: 0.8em 1em;
+    font-size: 1em;
+  }
+  .vector-search .vector-results .result-card {
+    padding: 0.9em 1em;
+  }
+  .vector-search .vector-results .vs-suggest,
+  .vector-search .vector-results .vs-history,
+  .vector-search .vector-results .vs-hot {
+    gap: 0.6em;
+    padding: 0.6em 1em;
+  }
 }
 /* 结果面板滚动条（细） */
 .vector-search > .vector-results::-webkit-scrollbar {

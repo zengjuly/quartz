@@ -122,6 +122,9 @@
   async function runSearch(query, box, k) {
     const mySeq = ++seq;
     const kk = k || TOP_K;
+    // 「查看更多」（k > TOP_K）时保留面板滚动位置；新查询/输入变化回顶
+    const keepScroll = kk > TOP_K;
+    const prevScroll = box.scrollTop;
     if (!query || !query.trim()) { renderHist(box, document.querySelector(".vector-search > .search-bar")); return; }
     addHist(query.trim());
     box.innerHTML = '<div class="vs-status">正在检索…</div>';
@@ -152,7 +155,7 @@
           sug = (sj.suggestions || []).filter((s) => s !== q2);
         }
       } catch (e) { sug = []; }
-      const sugHtml = sug.length
+      const sugHtml = !hits.length && sug.length
         ? '<div class="vs-suggest">猜你想搜：' + sug.slice(0, 5).map((s) =>
             '<button class="vs-chip" type="button" data-q="' + esc(s) + '">' + esc(s) + "</button>").join("") + "</div>"
         : "";
@@ -237,6 +240,7 @@
       box.innerHTML = sugHtml +
         '<div class="vs-count"><span class="vs-n">找到 ' + hits.length + ' 条相关结果</span>' +
         '<button class="vs-close" type="button" title="关闭">✕</button></div>' + html.join("") + moreHtml;
+      if (keepScroll) box.scrollTop = prevScroll;   // 查看更多后不丢阅读位置
       const mb = box.querySelector(".vs-more");
       if (mb) mb.addEventListener("click", () => runSearch(q2, box, kk + 22));
       const ic = box.querySelector(".vs-close");
