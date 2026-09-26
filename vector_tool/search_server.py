@@ -331,7 +331,12 @@ def suggest_cached(q: str, limit: int = 8):
         _SUG_ORDER.remove(key)
         _SUG_ORDER.append(key)
         return got
+    ready = bool(STATE["packs"])          # 进入时快照（同 search_cached）
     out = suggest(q, limit)
+    # packs 未加载（重启过渡期）时返回空但不缓存——否则坏空结果
+    # 会一直命中（曾实测：loading 期 query 缓存了 []，之后全错）
+    if not ready or not STATE["packs"]:
+        return out
     _SUG_CACHE[key] = out
     _SUG_ORDER.append(key)
     if len(_SUG_ORDER) > _SUG_MAX:
@@ -390,7 +395,12 @@ def search_cached(q: str, k: int):
     got = cache_get(key)
     if got is not None:
         return got[:k]
+    # 进入时快照：packs 空说明还在重启加载期（本请求可能触发加载完成，
+    # 但那时的空结果不代表"真的无结果"，不能缓存）
+    ready = bool(STATE["packs"])
     out = search(q, TOP_K_MAX)
+    if not ready or not STATE["packs"]:
+        return out[:k]
     cache_put(key, out)
     return out[:k]
 
@@ -421,6 +431,14 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 from urllib.parse import parse_qs, urlparse
                 qs = parse_qs(urlparse(self.path).query).get("q", [""])[0].strip()
+                # 与 search 一样触发 pack 重载：否则服务重启后若无人搜索，
+                # packs 一直空、suggest 持续返回空（曾实测「缠中说单」永久 []）
+                try:
+                    if reload_if_changed(pack_dir):
+                        cache_clear()
+                        suggest_clear()
+                except Exception:
+                    pass
                 if not qs:
                     # 空查询 → 常用词引导（别名表 key）
                     body = json.dumps({"suggestions": hot_terms()},
