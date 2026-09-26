@@ -49,6 +49,7 @@ _STOP = {"[CLS]", "[SEP]", "[PAD]", "[UNK]", "[MASK]"}
 _QUERIES = 0               # 累计查询数
 _CACHE_HITS = 0            # 缓存命中数
 _QUERY_LOCK = threading.Lock()
+_QUERY_FREQ = {}           # 查询词频统计（healthz top_queries 用）
 _SUG_CACHE = {}            # suggest LRU（前缀 → 建议列表）
 _SUG_ORDER = []
 _SUG_MAX = 128
@@ -333,6 +334,9 @@ def search_cached(q: str, k: int):
     key = (q, k)
     with _QUERY_LOCK:
         _QUERIES += 1
+        _QUERY_FREQ[q] = _QUERY_FREQ.get(q, 0) + 1
+        if len(_QUERY_FREQ) > 500:          # 防膨胀：只留最近 500 个词
+            _QUERY_FREQ.pop(next(iter(_QUERY_FREQ)))
     got = cache_get(key)
     if got is not None:
         return got
@@ -349,10 +353,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/healthz":
             with LOCK:
                 n = sum(p["n"] for p in STATE["packs"])
+                top = sorted(_QUERY_FREQ.items(), key=lambda x: -x[1])[:10]
                 body = json.dumps({"ok": True, "packs": len(STATE["packs"]),
                                    "chunks": n, "cache": len(_CACHE),
                                    "loading": STATE.get("loading", False),
-                                   "queries": _QUERIES, "cache_hits": _CACHE_HITS}).encode()
+                                   "queries": _QUERIES, "cache_hits": _CACHE_HITS,
+                                   "top_queries": top}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
