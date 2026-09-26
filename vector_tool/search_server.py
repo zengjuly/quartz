@@ -258,6 +258,21 @@ def search(q: str, k: int):
     return out
 
 
+def levenshtein(a: str, b: str) -> int:
+    """字符级编辑距离（suggest 错别字补充用；中文按字符）"""
+    if len(a) < len(b):
+        a, b = b, a
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[-1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
 def suggest(q: str, limit: int = 8):
     """搜索建议：别名表 key 匹配 + 库内文件名包含匹配。"""
     if not q or not STATE["packs"]:
@@ -273,6 +288,7 @@ def suggest(q: str, limit: int = 8):
         if len(out) >= limit:
             return out
     # 库内文件名（通过 idx 段提取 doc_path；paths blob 无分隔符，不能 split）
+    bases = set()
     for pk in STATE["packs"]:
         idx = pk["idx"]
         for b in range(0, pk["n"] * 4, 4):
@@ -285,6 +301,21 @@ def suggest(q: str, limit: int = 8):
                 out.append(base)
                 if len(out) >= limit:
                     return out
+            if base:
+                bases.add(base)
+    # 错别字补充：直接匹配不足时，对别名 key + 文件名做编辑距离模糊匹配
+    # （如「缠中说单」→「缠中说禅」；阈值按查询长度收紧——2 字查询只允许
+    #  1 编辑距离，否则「被驰」会匹配到所有 2 字常用词）
+    if len(out) < limit:
+        th = max(1, len(qs) // 2)
+        cand = list(STATE["aliases"]) + list(bases)
+        for k in cand:
+            kl = k.lower()
+            if kl not in seen and 0 < levenshtein(qs, kl) <= th:
+                seen.add(kl)
+                out.append(k)
+                if len(out) >= limit:
+                    break
     return out
 
 

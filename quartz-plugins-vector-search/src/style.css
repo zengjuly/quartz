@@ -93,6 +93,8 @@
     border-radius: 0;
     border: none;
     border-top: 1px solid var(--lightgray);
+    /* iPhone 底部 home 指示条遮挡滚动内容 */
+    padding-bottom: env(safe-area-inset-bottom, 0);
   }
   /* 全屏时关闭按钮可见（特异性高于基础 display:none，后者在下方定义） */
   .vector-search .vector-results .vs-close {

@@ -231,7 +231,9 @@
           '<p class="vs-meta"><span class="vs-bar"><span class="vs-bar-fill" style="width:' + pct + '%"></span></span>' +
           whyHtml +
           esc((h.domain || "").replace(/\.pack$/, "")) + " · " + esc(h.doc_path) +
-          " · " + h.score.toFixed(3) + "</p>" +
+          ' · <span class="vs-score" title="向量相似度 ' + h.vec.toFixed(3) +
+          (h.boost ? " + 词汇加权 " + h.boost.toFixed(3) : "") + " = " + h.score.toFixed(3) + '">' +
+          h.score.toFixed(3) + "</span></p>" +
           (h.extras && h.extras.length
             ? '<p class="vs-sub">' + h.extras.slice(0, 3).map((x) =>
                 '<a href="' + docPathToUrl(h.doc_path) + "#" + encodeURIComponent(x[0]) + '">' +
@@ -243,6 +245,9 @@
       }
       if (mySeq !== seq) return;
       lockScroll();                        // 面板有内容 → 锁背景滚动
+      // URL 同步：搜索词写入 ?q=，可分享链接、SPA 后退/刷新可恢复
+      // （replaceState 不触发 Quartz nav 事件，仅改地址栏）
+      try { history.replaceState(null, "", "?q=" + encodeURIComponent(q2)); } catch (e) {}
       const moreHtml = (hits.length >= kk && kk < 30)
         ? '<button class="vs-more" type="button">查看更多</button>' : "";
       box.innerHTML = sugHtml +
