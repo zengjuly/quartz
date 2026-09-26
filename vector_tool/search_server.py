@@ -54,6 +54,8 @@ _QUERY_FREQ = {}           # 查询词频统计（healthz top_queries 用）
 _SUG_CACHE = {}            # suggest LRU（前缀 → 建议列表）
 _SUG_ORDER = []
 _SUG_MAX = 128
+_SUG_QUERIES = 0           # suggest 累计请求数
+_SUG_HITS = 0              # suggest 缓存命中数
 
 
 def load_pack(path: Path):
@@ -234,13 +236,23 @@ def search(q: str, k: int):
             hits.append((score, pk["domain"], doc, head, text, vec_score,
                          why, round(min(boost, _BOOST_CAP), 4)))
     hits.sort(key=lambda r: -r[0])
-    # 同文档去重：同一 doc_path 只保留最高分条目（避免一篇占多卡）。
+    # 同文档去重：同一 doc_path 只保留最高分主条目，其余章节作为 extra 附带
+    # （客户端可在主卡下显示「其他命中章节」链接；信息不再丢弃）
     seen, out = set(), []
     for h in hits:
-        if h[2] in seen:
+        doc = h[2]
+        if doc in seen:
+            # 找已有主条目并追加 extra（章节标题 → 分数；同标题只留最高分）
+            for e in out:
+                if e[2] == doc:
+                    if h[3]:                        # 无 heading 的章节无法做锚点，不列
+                        ext = (h[3], h[0])           # (heading, score)
+                        if ext not in e[8]:
+                            e[8].append(ext)
+                    break
             continue
-        seen.add(h[2])
-        out.append(h)
+        seen.add(doc)
+        out.append(list(h) + [[]])               # 末尾追加 extra 列表
         if len(out) >= k:
             break
     return out
@@ -279,9 +291,12 @@ def suggest(q: str, limit: int = 8):
 def suggest_cached(q: str, limit: int = 8):
     """suggest 带 LRU 缓存：每次遍历 19800 条 chunk 约 60-90ms，
     重复前缀（用户逐字输入时高频命中）直接命中缓存。"""
+    global _SUG_QUERIES, _SUG_HITS
     key = (q.strip().lower(), limit)
+    _SUG_QUERIES += 1
     got = _SUG_CACHE.get(key)
     if got is not None:
+        _SUG_HITS += 1
         _SUG_ORDER.remove(key)
         _SUG_ORDER.append(key)
         return got
@@ -362,6 +377,8 @@ class Handler(BaseHTTPRequestHandler):
                                    "chunks": n, "cache": len(_CACHE),
                                    "loading": STATE.get("loading", False),
                                    "queries": _QUERIES, "cache_hits": _CACHE_HITS,
+                                   "suggest_queries": _SUG_QUERIES,
+                                   "suggest_hits": _SUG_HITS,
                                    "top_queries": top}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -430,6 +447,7 @@ class Handler(BaseHTTPRequestHandler):
                         {"score": round(h[0], 4), "vec": round(h[5], 4),
                          "domain": h[1], "doc_path": h[2], "heading": h[3],
                          "why": h[6], "boost": h[7],
+                         "extras": h[8] if len(h) > 8 else [],   # 同文档其他命中章节
                          "text": h[4][:800]}
                         for h in hits
                     ],

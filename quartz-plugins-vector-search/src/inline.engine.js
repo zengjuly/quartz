@@ -231,7 +231,15 @@
           '<p class="vs-meta"><span class="vs-bar"><span class="vs-bar-fill" style="width:' + pct + '%"></span></span>' +
           whyHtml +
           esc((h.domain || "").replace(/\.pack$/, "")) + " · " + esc(h.doc_path) +
-          " · " + h.score.toFixed(3) + "</p></a>");
+          " · " + h.score.toFixed(3) + "</p>" +
+          (h.extras && h.extras.length
+            ? '<p class="vs-sub">' + h.extras.slice(0, 3).map((x) =>
+                '<a href="' + docPathToUrl(h.doc_path) + "#" + encodeURIComponent(x[0]) + '">' +
+                esc(x[0]) + "</a>").join(" · ") +
+              (h.extras.length > 3 ? '<span class="vs-sub-more">+' + (h.extras.length - 3) + " 节</span>" : "") +
+              "</p>"
+            : "") +
+          "</a>");
       }
       if (mySeq !== seq) return;
       lockScroll();                        // 面板有内容 → 锁背景滚动
