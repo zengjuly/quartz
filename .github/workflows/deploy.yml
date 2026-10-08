@@ -46,7 +46,21 @@ jobs:
         run: |
           cd quartz-app
           npx quartz build
-
+      # 【完美修复版】精准清洗 HTML 标签属性，杜绝破坏底部 JS 混淆脚本
+      # - name: Normalize Dynamic Component IDs
+      #   run: |
+      #     echo "正在以精准匹配模式清洗 HTML 文件中的标签 ID..."
+          
+      #     # 1. 仅精准替换 HTML 标签中的 id="explorer-XX" 和 id="toc-XX"
+      #     # 使用 [[:space:]] 作为边界保护，确保不触碰打包后的压缩 JS 代码
+      #     find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/id="explorer-[0-9]+"/id="explorer-static"/g' {} +
+      #     find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/id="toc-[0-9]+"/id="toc-static"/g' {} +
+          
+      #     # 2. 仅精准替换 HTML 标签中的 aria-controls="..."
+      #     find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="explorer-[0-9]+"/aria-controls="explorer-static"/g' {} +
+      #     find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="toc-[0-9]+"/aria-controls="toc-static"/g' {} +
+          
+      #     echo "清洗完成！正在进入后续构建..."
       # 3. 部署 Python 推理环境
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -113,95 +127,95 @@ jobs:
       #     注意：不能用 actions/checkout 补根目录——checkout 默认 clean 会删掉
       #     未跟踪的 quartz-app/（连构建产物一起，run#12 实测）。
       #     改用 init + 空提交，单 commit 模式即可满足。
-      #- name: Init workspace-root git repo (fix deploy-action git dir)
-      #   run: |
-      #     git init -b main .
-      #     git -c user.name="deploy-anchor" -c user.email="anchor@localhost" \
-      #         commit --allow-empty -m "deploy anchor"
+      - name: Init workspace-root git repo (fix deploy-action git dir)
+        run: |
+          git init -b main .
+          git -c user.name="deploy-anchor" -c user.email="anchor@localhost" \
+              commit --allow-empty -m "deploy anchor"
 
-      # - name: Deploy Production Output to Another Repo
-      #   uses: JamesIves/github-pages-deploy-action@v4
-      #   with:
-      #     token: ${{ secrets.VAULT_TOKEN }}
-      #     repository-name: zengjuly/quartz_out
-      #     branch: main
-      #     folder: ./quartz-app/public # 相对 runner 默认工作目录
-      #     clean: true
-      #     git-config-name: zengjuly
-      #     target-folder: .
+      - name: Deploy Production Output to Another Repo
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          token: ${{ secrets.VAULT_TOKEN }}
+          repository-name: zengjuly/quartz_out
+          branch: main
+          folder: ./quartz-app/public # 相对 runner 默认工作目录
+          clean: true
+          git-config-name: zengjuly
+          target-folder: .
 
       # 10. 全自动将网页产物与向量库【真内容差异比对】后同步进新仓库
       #     通过 Python 抹平 id/aria-controls 中的数字做等价语义检测，杜绝伪差异大面积污染
-      - name: Filter Out Pseudo-Differences and Deploy
-        run: |
-          # 1. 克隆现有的公开产物库 main 分支到目标临时文件夹用于内容对比
-          git clone --depth 1 --branch main https://x-access-token:${{ secrets.VAULT_TOKEN }}@://github.com remote-out
+      # - name: Filter Out Pseudo-Differences and Deploy
+      #   run: |
+      #     # 1. 克隆现有的公开产物库 main 分支到目标临时文件夹用于内容对比
+      #     git clone --depth 1 --branch main https://x-access-token:${{ secrets.VAULT_TOKEN }}@://github.com remote-out
           
-          # 2. 运行内联 Python 脚本，智能识别哪些是“内容真修改”，哪些只是 ID 改变的“伪差异”
-          python -c "
-          import os, re, shutil
+      #     # 2. 运行内联 Python 脚本，智能识别哪些是“内容真修改”，哪些只是 ID 改变的“伪差异”
+      #     python -c "
+      #     import os, re, shutil
           
-          src_dir = './quartz-app/public'
-          dst_dir = './remote-out'
+      #     src_dir = './quartz-app/public'
+      #     dst_dir = './remote-out'
           
-          # 正则表达式：识别并匹配标签上的 explorer-XX 和 toc-XX 动态数字
-          id_pattern = re.compile(r'(id|aria-controls)=\"(explorer|toc)-[0-9]+\"')
+      #     # 正则表达式：识别并匹配标签上的 explorer-XX 和 toc-XX 动态数字
+      #     id_pattern = re.compile(r'(id|aria-controls)=\"(explorer|toc)-[0-9]+\"')
           
-          def get_normalized_content(file_path):
-              with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                  content = f.read()
-              # 将形如 id=\"explorer-25\" 的文本临时归一化为 id=\"explorer-PLACEHOLDER\" 用于纯文本对比
-              return id_pattern.sub(r'\1=\"\2-PLACEHOLDER\"', content)
+      #     def get_normalized_content(file_path):
+      #         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+      #             content = f.read()
+      #         # 将形如 id=\"explorer-25\" 的文本临时归一化为 id=\"explorer-PLACEHOLDER\" 用于纯文本对比
+      #         return id_pattern.sub(r'\1=\"\2-PLACEHOLDER\"', content)
           
-          # 遍历刚由 Quartz 渲染出来的全部网页新产物
-          for root, dirs, files in os.walk(src_dir):
-              for file in files:
-                  src_file = os.path.join(root, file)
-                  rel_path = os.path.relpath(src_file, src_dir)
-                  dst_file = os.path.join(dst_dir, rel_path)
+      #     # 遍历刚由 Quartz 渲染出来的全部网页新产物
+      #     for root, dirs, files in os.walk(src_dir):
+      #         for file in files:
+      #             src_file = os.path.join(root, file)
+      #             rel_path = os.path.relpath(src_file, src_dir)
+      #             dst_file = os.path.join(dst_dir, rel_path)
                   
-                  # 如果是全新文件，或者是二进制/非HTML文件（如前端检索包、图片、编译生成的.db等）
-                  if not os.path.exists(dst_file) or not file.endswith('.html'):
-                      os.makedirs(os.path.dirname(dst_file), exist_ok=True)
-                      shutil.copy2(src_file, dst_file)
-                      continue
+      #             # 如果是全新文件，或者是二进制/非HTML文件（如前端检索包、图片、编译生成的.db等）
+      #             if not os.path.exists(dst_file) or not file.endswith('.html'):
+      #                 os.makedirs(os.path.dirname(dst_file), exist_ok=True)
+      #                 shutil.copy2(src_file, dst_file)
+      #                 continue
                       
-                  # 如果是已存在的 HTML 文件，对比它们抹平数字后的核心内容
-                  if get_normalized_content(src_file) != get_normalized_content(dst_file):
-                      # 判定到文本正文、链接或核心结构真的发生了变化，允许覆盖更新该旧文件
-                      shutil.copy2(src_file, dst_file)
-          "
+      #             # 如果是已存在的 HTML 文件，对比它们抹平数字后的核心内容
+      #             if get_normalized_content(src_file) != get_normalized_content(dst_file):
+      #                 # 判定到文本正文、链接或核心结构真的发生了变化，允许覆盖更新该旧文件
+      #                 shutil.copy2(src_file, dst_file)
+      #     "
           
-          # 3. 处理已删除文件的同步（如果 obsdata 删了笔记，remote-out 中对应的旧 html 也要被删掉）
-          python -c "
-          import os
-          src_dir = './quartz-app/public'
-          dst_dir = './remote-out'
-          for root, dirs, files in os.walk(dst_dir):
-              if '.git' in root.split(os.sep):
-                  continue
-              for file in files:
-                  dst_file = os.path.join(root, file)
-                  rel_path = os.path.relpath(dst_file, dst_dir)
-                  src_file = os.path.join(src_dir, rel_path)
-                  if not os.path.exists(src_file):
-                      os.remove(dst_file)
-                      print(f'已同步删除过时网页: {rel_path}')
-          "
+      #     # 3. 处理已删除文件的同步（如果 obsdata 删了笔记，remote-out 中对应的旧 html 也要被删掉）
+      #     python -c "
+      #     import os
+      #     src_dir = './quartz-app/public'
+      #     dst_dir = './remote-out'
+      #     for root, dirs, files in os.walk(dst_dir):
+      #         if '.git' in root.split(os.sep):
+      #             continue
+      #         for file in files:
+      #             dst_file = os.path.join(root, file)
+      #             rel_path = os.path.relpath(dst_file, dst_dir)
+      #             src_file = os.path.join(src_dir, rel_path)
+      #             if not os.path.exists(src_file):
+      #                 os.remove(dst_file)
+      #                 print(f'已同步删除过时网页: {rel_path}')
+      #     "
 
-          # 4. 执行原生的 Git 差异提交与安全推送
-          cd remote-out
-          git config user.name "zengjuly"
-          git config user.email "zengjuly@://github.com"
+      #     # 4. 执行原生的 Git 差异提交与安全推送
+      #     cd remote-out
+      #     git config user.name "zengjuly"
+      #     git config user.email "zengjuly@://github.com"
           
-          # 检查被我们筛选覆盖后的部署库目录是否包含真实的改动
-          if [ -n "$(git status --porcelain)" ]; then
-            git add .
-            git commit -m "chore: safe incremental deployment (zero dynamic noise)"
-            git push origin main
-            echo "🚀 成功：已将真正发生实质性文字变更/删除的页面同步到 quartz_out！"
-          else
-            echo "✨ 绝妙：经检测，除 explorer/toc 编号漂移外无实质笔记变动，跳过提交，完美守住 0 污染！"
-          fi
+      #     # 检查被我们筛选覆盖后的部署库目录是否包含真实的改动
+      #     if [ -n "$(git status --porcelain)" ]; then
+      #       git add .
+      #       git commit -m "chore: safe incremental deployment (zero dynamic noise)"
+      #       git push origin main
+      #       echo "🚀 成功：已将真正发生实质性文字变更/删除的页面同步到 quartz_out！"
+      #     else
+      #       echo "✨ 绝妙：经检测，除 explorer/toc 编号漂移外无实质笔记变动，跳过提交，完美守住 0 污染！"
+      #     fi
 
 
