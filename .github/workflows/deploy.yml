@@ -55,6 +55,11 @@ jobs:
           # 统一将 id="explorer-XX" 替换为固定值 id="explorer-static"
           find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="explorer-[0-9]+"/aria-controls="explorer-static"/g' {} +
           find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/id="explorer-[0-9]+"/id="explorer-static"/g' {} +
+
+          # 2. 清洗 TOC (目录树) 组件的动态 ID
+          find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="toc-[0-9]+"/aria-controls="toc-static"/g' {} +
+          find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/id="toc-[0-9]+"/id="toc-static"/g' {} +
+          
           echo "清洗完成！"
 
       # 3. 部署 Python 推理环境
