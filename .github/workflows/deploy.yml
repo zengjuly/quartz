@@ -47,20 +47,20 @@ jobs:
           cd quartz-app
           npx quartz build
       # 【完美修复版】精准清洗 HTML 标签属性，杜绝破坏底部 JS 混淆脚本
-      # - name: Normalize Dynamic Component IDs
-      #   run: |
-      #     echo "正在以精准匹配模式清洗 HTML 文件中的标签 ID..."
+      - name: Normalize Dynamic Component IDs
+        run: |
+          echo "正在以精准匹配模式清洗 HTML 文件中的标签 ID..."
           
-      #     # 1. 仅精准替换 HTML 标签中的 id="explorer-XX" 和 id="toc-XX"
-      #     # 使用 [[:space:]] 作为边界保护，确保不触碰打包后的压缩 JS 代码
-      #     find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/id="explorer-[0-9]+"/id="explorer-static"/g' {} +
-      #     find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/id="toc-[0-9]+"/id="toc-static"/g' {} +
+          # 1. 仅精准替换 HTML 标签中的 id="explorer-XX" 和 id="toc-XX"
+          # 使用 [[:space:]] 作为边界保护，确保不触碰打包后的压缩 JS 代码
+          find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/id="explorer-[0-9]+"/id="explorer-static"/g' {} +
+          find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/id="toc-[0-9]+"/id="toc-static"/g' {} +
           
-      #     # 2. 仅精准替换 HTML 标签中的 aria-controls="..."
-      #     find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="explorer-[0-9]+"/aria-controls="explorer-static"/g' {} +
-      #     find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="toc-[0-9]+"/aria-controls="toc-static"/g' {} +
+          # 2. 仅精准替换 HTML 标签中的 aria-controls="..."
+          find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="explorer-[0-9]+"/aria-controls="explorer-static"/g' {} +
+          find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="toc-[0-9]+"/aria-controls="toc-static"/g' {} +
           
-      #     echo "清洗完成！正在进入后续构建..."
+          echo "清洗完成！正在进入后续构建..."
       # 3. 部署 Python 推理环境
       - name: Setup Python
         uses: actions/setup-python@v5
