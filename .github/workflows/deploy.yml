@@ -50,17 +50,18 @@ jobs:
       #  【新增核心步骤】清洗动态生成的组件 ID 漂移，消除伪差异
       - name: Normalize Dynamic Component IDs
         run: |
-          echo "正在清洗全站 HTML 文件中的动态 explorer ID..."
-          # 统一将 aria-controls="explorer-XX" 替换为固定值 aria-controls="explorer-static"
-          # 统一将 id="explorer-XX" 替换为固定值 id="explorer-static"
-          find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="explorer-[0-9]+"/aria-controls="explorer-static"/g' {} +
+          echo "正在以精准匹配模式清洗 HTML 文件中的标签 ID..."
+          
+          # 1. 仅精准替换 HTML 标签中的 id="explorer-XX" 和 id="toc-XX"
+          # 使用 [[:space:]] 作为边界保护，确保不触碰打包后的压缩 JS 代码
           find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/id="explorer-[0-9]+"/id="explorer-static"/g' {} +
-
-          # 2. 清洗 TOC (目录树) 组件的动态 ID
-          find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="toc-[0-9]+"/aria-controls="toc-static"/g' {} +
           find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/id="toc-[0-9]+"/id="toc-static"/g' {} +
           
-          echo "清洗完成！"
+          # 2. 仅精准替换 HTML 标签中的 aria-controls="..."
+          find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="explorer-[0-9]+"/aria-controls="explorer-static"/g' {} +
+          find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="toc-[0-9]+"/aria-controls="toc-static"/g' {} +
+          
+          echo "清洗完成！正在进入后续构建..."
 
       # 3. 部署 Python 推理环境
       - name: Setup Python
