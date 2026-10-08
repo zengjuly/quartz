@@ -47,6 +47,16 @@ jobs:
           cd quartz-app
           npx quartz build
 
+      #  【新增核心步骤】清洗动态生成的组件 ID 漂移，消除伪差异
+      - name: Normalize Dynamic Component IDs
+        run: |
+          echo "正在清洗全站 HTML 文件中的动态 explorer ID..."
+          # 统一将 aria-controls="explorer-XX" 替换为固定值 aria-controls="explorer-static"
+          # 统一将 id="explorer-XX" 替换为固定值 id="explorer-static"
+          find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/aria-controls="explorer-[0-9]+"/aria-controls="explorer-static"/g' {} +
+          find ./quartz-app/public -type f -name "*.html" -exec sed -i -E 's/id="explorer-[0-9]+"/id="explorer-static"/g' {} +
+          echo "清洗完成！"
+
       # 3. 部署 Python 推理环境
       - name: Setup Python
         uses: actions/setup-python@v5
