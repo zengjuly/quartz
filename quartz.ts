@@ -1,16 +1,23 @@
 import { loadQuartzConfig, loadQuartzLayout } from "./quartz/plugins/loader/config-loader"
-import * as ExternalPlugin from "./.quartz/plugins"
-
-// Advanced: pass callback functions that can't be expressed in YAML
-ExternalPlugin.Explorer({
-  filterFn: (node) => {
-    // 排除掉不希望渲染的、含有海量无意义碎文件的文件夹名称
-    const exclude = ["templates", "assets", "archive", "pasted"]
-    return !exclude.includes(node.name)
-  },
-
-})
+import Component from "./quartz/components" 
 
 const config = await loadQuartzConfig()
+
+// 注入高级硬切除过滤回调函数，将海量碎文件剔除出 DOM 树以解决加载慢问题
+if (config.plugins && config.plugins.emitters) {
+  // 寻找到配置中的 Explorer  emitter 并注入 filterFn
+  const explorerPlugin = config.plugins.emitters.find(p => p.name === "Explorer")
+  if (explorerPlugin) {
+    explorerPlugin.cfg = {
+      ...explorerPlugin.cfg,
+      filterFn: (node) => {
+        const exclude = ["templates", "assets", "archive", "pasted"]
+        return !exclude.includes(node.name)
+      }
+    }
+  }
+}
+
+
 export default config
 export const layout = await loadQuartzLayout()
