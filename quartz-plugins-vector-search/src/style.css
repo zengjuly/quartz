@@ -13,9 +13,15 @@
   border: 1px solid var(--lightgray);
   border-radius: 6px;
   background: var(--light);
+  /* 结果面板打开时全屏遮罩（::before, z=search-z+2）会盖住静态定位的输入框，
+     提到与遮罩同层——伪元素在树序上先于 input，同 z-index 时 input 绘制在上；
+     仍低于结果面板（z=search-z+3），两者几何不重叠 */
+  position: relative;
+  z-index: calc(var(--search-z-index, 999) + 2);
 }
 .vector-search .vs-clear-input {
   position: absolute;
+  z-index: calc(var(--search-z-index, 999) + 2);  /* 与输入框同层、树序在后 → 盖在输入框上 */
   right: 0.4em;
   top: 50%;
   transform: translateY(-50%);
