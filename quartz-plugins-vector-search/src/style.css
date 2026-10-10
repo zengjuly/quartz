@@ -3,6 +3,14 @@
   max-width: 14rem;
   position: relative;
 }
+/* 展开态的导航栏占位块（节点由引擎插入在 root 之后）：root 变 fixed 脱离文档流后，
+   用它顶住原位，避免导航栏 flex 重排导致内置搜索按钮宽度跳动。
+   显示规则必须在展开态的同一个 ≥801px 媒体块里——移动端 root 不脱离文档流，
+   若这里也显示就白白多占一份宽度。 */
+.vs-nav-spacer {
+  display: none;
+  flex: 0 0 auto;
+}
 .vector-search > input.search-bar {
   width: 100%;
   box-sizing: border-box;
@@ -44,8 +52,8 @@
 .vector-search > .vector-results:empty {
   display: none;
 }
-/* 结果面板：与内置搜索（.search-container/.search-space）一致的全屏浮层范式
-   —— 居中 65% 宽（移动端 90%）、12vh 起、带模糊遮罩，而不是贴着输入框的窄下拉。 */
+/* 结果面板基础样式（原全屏浮层范式）：居中 65% 宽、12vh 起、带模糊遮罩。
+   ≤800px 由下方媒体块改成全屏；≥801px 由下面的媒体块改成「输入框下拉列」。 */
 .vector-search > .vector-results:not(:empty) {
   position: fixed;
   top: 12vh;
@@ -61,6 +69,39 @@
   border: 1px solid var(--lightgray);
   border-radius: 7px;
   box-shadow: 0 14px 50px rgba(27, 33, 48, 0.12), 0 10px 30px rgba(27, 33, 48, 0.16);
+}
+/* 展开态（桌面）：输入框聚焦、或已有结果时，整个组件脱离导航栏，成为与内置搜索
+   （.search-container > .search-space：65% 宽、12vh 起、居中）一致的浮层列——
+   输入框即宽 65% 的居中大框，结果面板挂在它正下方、同宽。
+   用 left:17.5% 而不是 translateX(-50%) 居中——root 一旦带 transform，就会成为
+   fixed 后代的包含块，遮罩 ::before 的 inset:0 会缩成 root 那个小方框。
+   root 高度=输入框高度（面板是 absolute，不参与），所以清空按钮的 top:50%、
+   面板的 top:100% 恰好都以输入框为基准。
+   ≤800px 不展开：移动端本就是全屏结果面板，输入框留在导航栏可见。 */
+@media (min-width: 801px) {
+  .vector-search:focus-within,
+  .vector-search:has(> .vector-results:not(:empty)) {
+    position: fixed;
+    top: 12vh;
+    left: 17.5%;          /* 65% 宽居中 */
+    width: 65%;
+    min-width: 0;
+    max-width: none;
+    z-index: calc(var(--search-z-index, 999) + 2);
+  }
+  /* 占位块只在 root 真正脱离文档流时显示（与上面同一媒体块） */
+  .vector-search:focus-within ~ .vs-nav-spacer,
+  .vector-search:has(> .vector-results:not(:empty)) ~ .vs-nav-spacer {
+    display: block;
+  }
+  .vector-search > .vector-results:not(:empty) {
+    position: absolute;
+    top: calc(100% + 0.5em);
+    left: 0;
+    right: 0;
+    width: auto;
+    transform: none;
+  }
 }
 /* 暗色模式增强：面板与遮罩明度差小、浅色阴影无效——加深阴影、提亮边框，
    让浮层轮廓可辨（light 模式下规则不生效，保持原样） */

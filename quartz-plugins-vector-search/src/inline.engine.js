@@ -334,6 +334,34 @@
       clearBtn.textContent = "✕";
       clearBtn.style.display = "none";
       input.parentNode.insertBefore(clearBtn, input.nextSibling);
+      // 展开态（focus-within/有结果）时 root 变 fixed 脱离导航栏，空出的位置会让
+      // 导航栏 flex 重排（实测内置搜索按钮 98px → 192px，聚焦瞬间跳动）。
+      // 紧跟 root 放一个同尺寸占位块顶住原位；只在展开时 display:block（CSS 用
+      // 相邻选择器控制，见 style.css 的 .vs-nav-spacer）。
+      let spacer = root.nextElementSibling;
+      if (!spacer || !spacer.classList.contains("vs-nav-spacer")) {
+        spacer = document.createElement("div");
+        spacer.className = "vs-nav-spacer";
+        root.parentNode.insertBefore(spacer, root.nextSibling);
+      }
+      // 导航栏被 Quartz 重建后可能残留旧占位块，清掉（否则多占一份宽度）
+      root.parentNode
+        .querySelectorAll(":scope > .vs-nav-spacer")
+        .forEach((s) => { if (s !== spacer) s.remove(); });
+      const recordIdle = () => {
+        if (root.matches(":focus-within") ||
+            root.querySelector(".vector-results:not(:empty)")) return;  // 展开中量的是展开尺寸
+        const r = root.getBoundingClientRect();
+        if (r.width) {
+          spacer.style.width = Math.round(r.width) + "px";
+          spacer.style.height = Math.round(r.height) + "px";
+        }
+      };
+      recordIdle();
+      if (!root.dataset.vsIdleWatch) {
+        root.dataset.vsIdleWatch = "1";
+        window.addEventListener("resize", recordIdle);
+      }
       clearBtn.addEventListener("click", () => {
         input.value = "";
         box.innerHTML = "";
